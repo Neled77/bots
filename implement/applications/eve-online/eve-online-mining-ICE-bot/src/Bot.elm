@@ -1,4 +1,4 @@
-{- EVE Online mining bot version 2020-05-22
+{- EVE Online mining bot version 2020-05-25
    The bot warps to an asteroid belt, mines there until the ore hold is full, and then docks at a station to unload the ore. It then repeats this cycle until you stop it.
    It remembers the station in which it was last docked, and docks again at the same station.
 
@@ -646,8 +646,8 @@ lockTargetFromOverviewEntryAndEnsureIsInRange readingFromGameClient rangeInMeter
 
             else
                 DescribeBranch ("Object is not in range (" ++ (distanceInMeters |> String.fromInt) ++ " meters away). Orbit.")
-                    (if isShipOrbiting readingFromGameClient then
-                        DescribeBranch "I see we already Orbiting." (EndDecisionPath Wait)
+                    (if shipManeuverIsShipOrbiting readingFromGameClient then
+                        DescribeBranch "I see we already Orbiting." waitForProgressInGame
                      else
                         EndDecisionPath
                         (actStartingWithRightClickOnOverviewEntry
@@ -680,25 +680,6 @@ lockTargetFromOverviewEntryAndEnsureIsInRange readingFromGameClient rangeInMeter
         Err error ->
             DescribeBranch ("Failed to read the distance: " ++ error) askForHelpToGetUnstuck
 
-isShipApproaching : ReadingFromGameClient -> Bool
-isShipApproaching =
-    .shipUI
-        >> maybeNothingFromCanNotSeeIt
-        >> Maybe.andThen (.indication >> maybeNothingFromCanNotSeeIt)
-        >> Maybe.andThen (.maneuverType >> maybeNothingFromCanNotSeeIt)
-        >> Maybe.map ((==) EveOnline.ParseUserInterface.ManeuverApproach)
-        -- If the ship is just floating in space, there might be no indication displayed.
-        >> Maybe.withDefault False
-
-isShipOrbiting : ReadingFromGameClient -> Bool
-isShipOrbiting =
-    .shipUI
-        >> maybeNothingFromCanNotSeeIt
-        >> Maybe.andThen (.indication >> maybeNothingFromCanNotSeeIt)
-        >> Maybe.andThen (.maneuverType >> maybeNothingFromCanNotSeeIt)
-        >> Maybe.map ((==) EveOnline.ParseUserInterface.ManeuverOrbit)
-        -- If the ship is just floating in space, there might be no indication displayed.
-        >> Maybe.withDefault False
 
 lockTargetFromOverviewEntry : OverviewWindowEntry -> DecisionPathNode
 lockTargetFromOverviewEntry overviewEntry =
@@ -1348,5 +1329,26 @@ isShipWarpingOrJumping =
                 [ EveOnline.ParseUserInterface.ManeuverWarp, EveOnline.ParseUserInterface.ManeuverJump ]
                     |> List.member maneuverType
             )
+        -- If the ship is just floating in space, there might be no indication displayed.
+        >> Maybe.withDefault False
+
+
+shipManeuverIsApproaching : ReadingFromGameClient -> Bool
+shipManeuverIsApproaching =
+    .shipUI
+        >> maybeNothingFromCanNotSeeIt
+        >> Maybe.andThen (.indication >> maybeNothingFromCanNotSeeIt)
+        >> Maybe.andThen (.maneuverType >> maybeNothingFromCanNotSeeIt)
+        >> Maybe.map ((==) EveOnline.ParseUserInterface.ManeuverApproach)
+        -- If the ship is just floating in space, there might be no indication displayed.
+        >> Maybe.withDefault False
+
+shipManeuverIsShipOrbiting : ReadingFromGameClient -> Bool
+shipManeuverIsShipOrbiting =
+    .shipUI
+        >> maybeNothingFromCanNotSeeIt
+        >> Maybe.andThen (.indication >> maybeNothingFromCanNotSeeIt)
+        >> Maybe.andThen (.maneuverType >> maybeNothingFromCanNotSeeIt)
+        >> Maybe.map ((==) EveOnline.ParseUserInterface.ManeuverOrbit)
         -- If the ship is just floating in space, there might be no indication displayed.
         >> Maybe.withDefault False
