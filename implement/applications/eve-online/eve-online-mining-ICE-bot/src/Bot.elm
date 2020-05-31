@@ -508,7 +508,15 @@ enterAnomaly context =
                 Just anomalyScanResult ->
                     DescribeBranch "Warp to anomaly."
                         (EndDecisionPath
-                            (Act
+                            (useContextMenuCascade
+                                ( "scan result.", anomalyScanResult.uiNode )
+                                [ MenuEntryWithTextContaining "Warp to Within"
+                                , MenuEntryWithTextContaining "Within 0 m"]
+                            )
+                        )
+            
+                      {-
+                       (Act
                                 { actionsAlreadyDecided =
                                     ( "Rightclick on the scan result."
                                     , [ anomalyScanResult.uiNode |> clickOnUIElement MouseButtonRight ]
@@ -526,8 +534,9 @@ enterAnomaly context =
                                       )
                                     ]
                                 }
-                            )
+                            
                         )
+                      -}
 
 travelToMiningSiteAndLaunchDronesAndTargetAsteroid : BotDecisionContext -> DecisionPathNode
 travelToMiningSiteAndLaunchDronesAndTargetAsteroid context =
