@@ -23,7 +23,7 @@ Despite being quite robust, this bot is far from being as smart as a human. For 
 
 ## Starting the Ratting Bot
 
-To start the bot, download the script from https://catalog.botengine.org/C6CE0BE5DC14407EE1F1B84F79C8E5121C25EE93C084D931768E456F51F1AB1C and then run it.
+To start the bot, download the script from https://catalog.botengine.org/696f09be6825ba89f4e1e78973877a99d5803245c26f507d3839f04858c0574d and then run it.
 
 In case the botengine program is not yet installed on your system, the script will redirect you to the installation guide at https://to.botengine.org/failed-run-bot-did-not-find-botengine-program
 
@@ -39,11 +39,11 @@ From here on, the bot works automatically. It detects the topmost game client wi
 
 In case I forgot to add something here or you have any questions, don't hesitate to ask on the [BotEngine forum](https://forum.botengine.org/).
 
-## Pricing and Online Bot Sessions
+## Pricing and Online Sessions
 
-You can test the bot for free. When you want the bot to run more than 15 minutes per session, use an online-bot session as explained at [https://to.botengine.org/guide/online-session](https://to.botengine.org/guide/online-session)
+You can test the bot for free. When you want the bot to run more than 15 minutes per session, use an online session as explained at [https://to.botengine.org/guide/online-session](https://to.botengine.org/guide/online-session)
 
-Online bot sessions cost 2000 credits per hour. To add credits to your account, follow the instructions at [https://reactor.botengine.org/billing/add-credits](https://reactor.botengine.org/billing/add-credits)
+Online sessions cost 2000 credits per hour. To add credits to your account, follow the instructions at [https://reactor.botengine.org/billing/add-credits](https://reactor.botengine.org/billing/add-credits)
 
 For more about purchasing and using credits, see the guide at [https://forum.botengine.org/t/purchasing-and-using-botengine-credits-frequently-asked-questions-faq/837](https://forum.botengine.org/t/purchasing-and-using-botengine-credits-frequently-asked-questions-faq/837)
 
