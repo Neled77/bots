@@ -3,7 +3,6 @@
         "SingleFieldRecord": false,
         "MultiLineRecordFormatting": false,
         "UseConsOverConcat": false,
-        "MapNothingToNothing": false,
-        "ExposeAll": false
+        "MapNothingToNothing": false
     }
 }
