@@ -33,6 +33,7 @@
 
 module BotEngineApp exposing
     ( State
+    , enterAnomaly
     , initState
     , processEvent
     )
@@ -102,6 +103,9 @@ parseBotSettings =
          , ( "bot-step-delay"
            , AppSettings.ValueTypeInteger (\delay settings -> { settings | botStepDelayMilliseconds = delay })
            )
+        , ( "anomaly-name"
+           , AppSettings.ValueTypeString (\anomalyName -> \settings -> { settings | anomalyName = anomalyName })
+           )
          , ( "last-docked-station-name-from-info-panel"
            , AppSettings.ValueTypeString (\stationName -> \settings -> { settings | lastDockedStationNameFromInfoPanel = Just stationName })
            )
@@ -121,6 +125,7 @@ type alias BotSettings =
     , botStepDelayMilliseconds : Int
     , lastDockedStationNameFromInfoPanel : Maybe String
     , oreHoldMaxPercent : Int
+    , anomalyName : String    
     }
 
 
@@ -459,6 +464,58 @@ unlockTargetsNotForMining context =
                     )
             )
 
+probeScanResultsRepresentsMatchingAnomaly : BotSettings -> EveOnline.ParseUserInterface.ProbeScanResult -> Bool
+probeScanResultsRepresentsMatchingAnomaly settings probeScanResult =
+    let
+        anyContainedTextMatches predicate =
+            probeScanResult.textsLeftToRight |> List.any predicate
+
+        isCombatAnomaly =
+            anyContainedTextMatches (String.toLower >> String.contains "ice belt")
+
+        {-
+           isCombatAnomaly =
+            anyContainedTextMatches (String.toLower >> String.contains "combat")
+        -}
+
+        matchesName =
+            (settings.anomalyName |> String.isEmpty)
+                || anyContainedTextMatches (String.toLower >> String.contains (settings.anomalyName |> String.toLower))
+    in
+    isCombatAnomaly && matchesName
+
+enterAnomaly : BotDecisionContext -> DecisionPathNode
+enterAnomaly context =
+    case context.readingFromGameClient.probeScannerWindow of
+        CanNotSeeIt ->
+            DescribeBranch "I do not see the probe scanner window." askForHelpToGetUnstuck
+
+        CanSee probeScannerWindow ->
+            let
+                matchingScanResults =
+                    probeScannerWindow.scanResults
+                        |> List.filter (probeScanResultsRepresentsMatchingAnomaly (context |> botSettingsFromDecisionContext))
+            in
+            case
+                matchingScanResults
+                    |> listElementAtWrappedIndex (getEntropyIntFromReadingFromGameClient context.readingFromGameClient)
+            of
+                Nothing ->
+                    DescribeBranch
+                        ("I see "
+                            ++ (probeScannerWindow.scanResults |> List.length |> String.fromInt)
+                            ++ " scan results, and no matching anomaly. Wait for a matching anomaly to appear."
+                        )
+                        waitForProgressInGame
+
+                Just anomalyScanResult ->
+                    DescribeBranch "Warp to anomaly."
+                        (useContextMenuCascade
+                            ( "Scan result", anomalyScanResult.uiNode )
+                            (useMenuEntryWithTextContaining "Warp to Within"
+                                (useMenuEntryWithTextContaining "Within 0 m" menuCascadeCompleted)
+                            )
+                        )
 
 travelToMiningSiteAndLaunchDronesAndTargetAsteroid : BotDecisionContext -> DecisionPathNode
 travelToMiningSiteAndLaunchDronesAndTargetAsteroid context =
@@ -467,7 +524,8 @@ travelToMiningSiteAndLaunchDronesAndTargetAsteroid context =
             DescribeBranch "I see no asteroid in the overview. Warp to mining site."
                 (returnDronesToBay context.readingFromGameClient
                     |> Maybe.withDefault
-                        (warpToMiningSite context.readingFromGameClient)
+                        --(warpToMiningSite context.readingFromGameClient)
+                        (enterAnomaly context)
                 )
 
         Just asteroidInOverview ->
@@ -551,14 +609,16 @@ lockTargetFromOverviewEntryAndEnsureIsInRange readingFromGameClient rangeInMeter
                         (lockTargetFromOverviewEntry overviewEntry)
 
             else
-                DescribeBranch ("Object is not in range (" ++ (distanceInMeters |> String.fromInt) ++ " meters away). Approach.")
-                    (if shipManeuverIsApproaching readingFromGameClient then
-                        DescribeBranch "I see we already approach." waitForProgressInGame
-
+                DescribeBranch ("Object is not in range (" ++ (distanceInMeters |> String.fromInt) ++ " meters away). Orbit.")
+                    (if shipManeuverIsShipOrbiting readingFromGameClient then
+                        DescribeBranch "I see we already Orbiting." waitForProgressInGame
                      else
                         useContextMenuCascadeOnOverviewEntry
                             overviewEntry
-                            (useMenuEntryWithTextContaining "approach" menuCascadeCompleted)
+                            (useMenuEntryWithTextContaining "orbit"
+                                (useMenuEntryWithTextContaining "2,500 m" menuCascadeCompleted)
+                            )
+                        
                     )
 
         Err error ->
