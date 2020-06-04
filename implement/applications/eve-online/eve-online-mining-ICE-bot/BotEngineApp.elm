@@ -84,6 +84,7 @@ defaultBotSettings =
     , botStepDelayMilliseconds = 2000
     , lastDockedStationNameFromInfoPanel = Nothing
     , oreHoldMaxPercent = 99
+    , anomalyName = ""    
     }
 
 
@@ -103,7 +104,7 @@ parseBotSettings =
          , ( "bot-step-delay"
            , AppSettings.ValueTypeInteger (\delay settings -> { settings | botStepDelayMilliseconds = delay })
            )
-        , ( "anomaly-name"
+         , ( "anomaly-name"
            , AppSettings.ValueTypeString (\anomalyName -> \settings -> { settings | anomalyName = anomalyName })
            )
          , ( "last-docked-station-name-from-info-panel"
