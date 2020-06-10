@@ -1,4 +1,4 @@
-{- EVE Online mining bot version 2020-06-03
+{- EVE Online mining bot version 2020-06-07
    The bot warps to an asteroid belt, mines there until the ore hold is full, and then docks at a station to unload the ore. It then repeats this cycle until you stop it.
    It remembers the station in which it was last docked, and docks again at the same station.
 
@@ -22,6 +22,7 @@
     + TO-DO -> set variable to chose between ORE Anomaly and ICE Anomaly -> Parameter form Mining lasers in fitted ship
     + TO-DO -> change some names of variables like "iscombatanomaly" to "isICEanomaly"
     - DONE -> Integragte the "already aproaching code from idea of JongoFett " to enable this as "already orbiting" (https://github.com/Viir/bots/commit/a307028d742926a0b746f6cccda9fdddbef2c60e)
+    - use struture instead of station
     
 -}
 {-
