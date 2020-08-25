@@ -300,6 +300,8 @@ void ExecuteEffectOnWindow(
     if (bringWindowToForeground)
         EnsureWindowIsForeground(windowHandle);
 
+    //  TODO: Consolidate mouseMoveTo and simpleMouseClickAtLocation?
+
     if (effectOnWindow?.mouseMoveTo != null)
     {
         //  Build motion description based on https://github.com/Arcitectus/Sanderling/blob/ada11c9f8df2367976a6bcc53efbe9917107bfa7/src/Sanderling/Sanderling/Motor/Extension.cs#L24-L131
