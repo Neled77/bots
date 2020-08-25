@@ -15,7 +15,7 @@ module WebBrowser.BotFramework exposing
     , processEvent
     )
 
-import BotEngine.Interface_To_Host_20200610 as InterfaceToHost
+import BotEngine.Interface_To_Host_20200824 as InterfaceToHost
 import WebBrowser.VolatileHostInterface as VolatileHostInterface
 import WebBrowser.VolatileHostScript as VolatileHostScript
 
@@ -133,7 +133,7 @@ processEvent botProcessEvent fromHostEvent stateBeforeIntegratingEvent =
                     )
                 |> Maybe.withDefault False
 
-        ( state, responseBeforeAddingStatusMessage ) =
+        ( state, responseBeforeAddingStatusMessageAndSubscribeToTime ) =
             if botRequestedFinishSession then
                 ( stateBefore
                 , { statusDescriptionText = "The bot finished the session."
@@ -149,7 +149,7 @@ processEvent botProcessEvent fromHostEvent stateBeforeIntegratingEvent =
                     Just taskInProgress ->
                         ( stateBefore
                         , { statusDescriptionText = "Waiting for completion of task '" ++ taskInProgress.taskIdString ++ "': " ++ taskInProgress.taskDescription
-                          , notifyWhenArrivedAtTime = Just { timeInMilliseconds = stateBefore.timeInMilliseconds + 500 }
+                          , notifyWhenArrivedAtTime = Nothing
                           , startTasks = []
                           }
                             |> InterfaceToHost.ContinueSession
@@ -158,11 +158,15 @@ processEvent botProcessEvent fromHostEvent stateBeforeIntegratingEvent =
         statusMessagePrefix =
             (state |> statusReportFromState) ++ "\nCurrent activity: "
 
+        notifyWhenArrivedAtTime =
+            stateBefore.timeInMilliseconds + 500
+
         response =
-            case responseBeforeAddingStatusMessage of
+            case responseBeforeAddingStatusMessageAndSubscribeToTime of
                 InterfaceToHost.ContinueSession continueSession ->
                     { continueSession
                         | statusDescriptionText = statusMessagePrefix ++ continueSession.statusDescriptionText
+                        , notifyWhenArrivedAtTime = Just { timeInMilliseconds = notifyWhenArrivedAtTime }
                     }
                         |> InterfaceToHost.ContinueSession
 
@@ -202,7 +206,7 @@ processEventNotWaitingForTask stateBefore =
               }
             , { startTasks = [ { taskId = InterfaceToHost.taskIdFromString taskIdString, task = setupTask } ]
               , statusDescriptionText = "Continue setup: " ++ setupTaskDescription
-              , notifyWhenArrivedAtTime = Just { timeInMilliseconds = stateBefore.timeInMilliseconds + 1000 }
+              , notifyWhenArrivedAtTime = Nothing
               }
                 |> InterfaceToHost.ContinueSession
             )
@@ -279,7 +283,7 @@ processEventNotWaitingForTask stateBefore =
             ( state
             , { startTasks = startTasks
               , statusDescriptionText = "Operate bot."
-              , notifyWhenArrivedAtTime = Just { timeInMilliseconds = stateBefore.timeInMilliseconds + 300 }
+              , notifyWhenArrivedAtTime = Nothing
               }
                 |> InterfaceToHost.ContinueSession
             )
@@ -295,16 +299,19 @@ integrateFromHostEvent :
     -> InterfaceToHost.AppEvent
     -> StateIncludingSetup botState
     -> StateIncludingSetup botState
-integrateFromHostEvent botProcessEvent fromHostEvent stateBefore =
+integrateFromHostEvent botProcessEvent fromHostEvent stateBeforeUpdateTime =
     let
+        stateBefore =
+            { stateBeforeUpdateTime | timeInMilliseconds = fromHostEvent.timeInMilliseconds }
+
         ( stateBeforeIntegrateBotEvent, maybeBotEvent ) =
-            case fromHostEvent of
-                InterfaceToHost.ArrivedAtTime { timeInMilliseconds } ->
-                    ( { stateBefore | timeInMilliseconds = timeInMilliseconds }
-                    , Just (ArrivedAtTime { timeInMilliseconds = timeInMilliseconds })
+            case fromHostEvent.eventAtTime of
+                InterfaceToHost.TimeArrivedEvent ->
+                    ( stateBefore
+                    , Just (ArrivedAtTime { timeInMilliseconds = fromHostEvent.timeInMilliseconds })
                     )
 
-                InterfaceToHost.CompletedTask taskComplete ->
+                InterfaceToHost.TaskCompletedEvent taskComplete ->
                     let
                         ( setupState, maybeBotEventFromTaskComplete ) =
                             stateBefore.setup
@@ -328,12 +335,12 @@ integrateFromHostEvent botProcessEvent fromHostEvent stateBefore =
                     , maybeBotEventFromTaskComplete
                     )
 
-                InterfaceToHost.SetAppSettings appSettings ->
+                InterfaceToHost.AppSettingsChangedEvent appSettings ->
                     ( stateBefore
                     , Just (SetAppSettings appSettings)
                     )
 
-                InterfaceToHost.SetSessionTimeLimit _ ->
+                InterfaceToHost.SessionDurationPlannedEvent _ ->
                     ( stateBefore, Nothing )
     in
     maybeBotEvent
@@ -418,7 +425,7 @@ integrateTaskResult ( time, taskResult ) setupStateBefore =
 
 
 integrateResponseFromVolatileHost : ( Int, VolatileHostInterface.ResponseFromVolatileHost ) -> SetupState -> ( SetupState, Maybe BotEvent )
-integrateResponseFromVolatileHost ( time, response ) stateBefore =
+integrateResponseFromVolatileHost ( _, response ) stateBefore =
     case response of
         VolatileHostInterface.WebBrowserStarted ->
             ( { stateBefore | webBrowserStarted = True }, Nothing )

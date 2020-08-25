@@ -11,50 +11,26 @@
 -}
 
 
-module EveOnline.AppFramework exposing
-    ( AppEffect(..)
-    , AppEvent(..)
-    , AppEventContext
-    , AppEventResponse(..)
-    , ReadingFromGameClient
-    , SetupState
-    , ShipModulesMemory
-    , StateIncludingFramework
-    , UIElement
-    , UseContextMenuCascadeNode
-    , clickOnUIElement
-    , getEntropyIntFromReadingFromGameClient
-    , getModuleButtonTooltipFromModuleButton
-    , initShipModulesMemory
-    , initState
-    , integrateCurrentReadingsIntoShipModulesMemory
-    , menuCascadeCompleted
-    , menuEntryMatchesStationNameFromLocationInfoPanel
-    , processEvent
-    , secondsToSessionEnd
-    , unpackContextMenuTreeToListOfActionsDependingOnReadings
-    , useMenuEntryInLastContextMenuInCascade
-    , useMenuEntryWithTextContaining
-    , useMenuEntryWithTextContainingFirstOf
-    , useMenuEntryWithTextEqual
-    , useRandomMenuEntry
-    )
+module EveOnline.AppFramework exposing (..)
 
-import BotEngine.Interface_To_Host_20200610 as InterfaceToHost
+import BotEngine.Interface_To_Host_20200824 as InterfaceToHost
 import Common.Basics
+import Common.DecisionTree
 import Common.EffectOnWindow
 import Common.FNV
 import Dict
 import EveOnline.MemoryReading
-import EveOnline.ParseUserInterface
-    exposing
-        ( MaybeVisible(..)
-        , centerFromDisplayRegion
-        , maybeNothingFromCanNotSeeIt
-        )
-import EveOnline.VolatileHostInterface as VolatileHostInterface exposing (effectMouseClickAtLocation)
+import EveOnline.ParseUserInterface exposing (centerFromDisplayRegion)
+import EveOnline.VolatileHostInterface as VolatileHostInterface
 import EveOnline.VolatileHostScript as VolatileHostScript
 import String.Extra
+
+
+type alias AppConfiguration appSettings appState =
+    { parseAppSettings : String -> Result String appSettings
+    , selectGameClientInstance : Maybe appSettings -> List GameClientProcessSummary -> Result String { selectedProcess : GameClientProcessSummary, report : List String }
+    , processEvent : AppEventContext appSettings -> AppEvent -> appState -> ( appState, AppEventResponse )
+    }
 
 
 type AppEvent
@@ -74,7 +50,7 @@ type alias ContinueSessionStructure =
 
 
 type AppEffect
-    = EffectOnGameClientWindow VolatileHostInterface.EffectOnWindowStructure
+    = EffectOnGameClientWindow Common.EffectOnWindow.EffectOnWindowStructure
     | EffectConsoleBeepSequence (List ConsoleBeepStructure)
 
 
@@ -111,7 +87,7 @@ type alias SetupState =
     { createVolatileHostResult : Maybe (Result InterfaceToHost.CreateVolatileHostErrorStructure InterfaceToHost.CreateVolatileHostComplete)
     , requestsToVolatileHostCount : Int
     , lastRequestToVolatileHostResult : Maybe (Result String InterfaceToHost.RequestToVolatileHostComplete)
-    , gameClientProcesses : Maybe (List VolatileHostInterface.GameClientProcessSummaryStruct)
+    , gameClientProcesses : Maybe (List GameClientProcessSummary)
     , searchUIRootAddressResult : Maybe VolatileHostInterface.SearchUIRootAddressResultStructure
     , lastMemoryReading : Maybe { timeInMilliseconds : Int, memoryReadingResult : VolatileHostInterface.GetMemoryReadingResultStructure }
     , memoryReadingDurations : List Int
@@ -142,9 +118,13 @@ type alias UIElement =
     EveOnline.ParseUserInterface.UITreeNodeWithDisplayRegion
 
 
+type alias GameClientProcessSummary =
+    VolatileHostInterface.GameClientProcessSummaryStruct
+
+
 type alias ShipModulesMemory =
     { tooltipFromModuleButton : Dict.Dict String EveOnline.ParseUserInterface.ModuleButtonTooltip
-    , lastReadingTooltip : MaybeVisible EveOnline.ParseUserInterface.ModuleButtonTooltip
+    , lastReadingTooltip : Maybe EveOnline.ParseUserInterface.ModuleButtonTooltip
     }
 
 
@@ -156,7 +136,7 @@ volatileHostRecycleInterval =
 initShipModulesMemory : ShipModulesMemory
 initShipModulesMemory =
     { tooltipFromModuleButton = Dict.empty
-    , lastReadingTooltip = CanNotSeeIt
+    , lastReadingTooltip = Nothing
     }
 
 
@@ -171,7 +151,7 @@ integrateCurrentReadingsIntoShipModulesMemory currentReading memoryBefore =
         {- To ensure robustness, we store a new tooltip only when the display texts match in two consecutive readings from the game client. -}
         tooltipAvailableToStore =
             case ( memoryBefore.lastReadingTooltip, currentReading.moduleButtonTooltip ) of
-                ( CanSee previousTooltip, CanSee currentTooltip ) ->
+                ( Just previousTooltip, Just currentTooltip ) ->
                     if getTooltipDataForEqualityComparison previousTooltip == getTooltipDataForEqualityComparison currentTooltip then
                         Just currentTooltip
 
@@ -183,7 +163,6 @@ integrateCurrentReadingsIntoShipModulesMemory currentReading memoryBefore =
 
         visibleModuleButtons =
             currentReading.shipUI
-                |> maybeNothingFromCanNotSeeIt
                 |> Maybe.map .moduleButtons
                 |> Maybe.withDefault []
 
@@ -252,22 +231,23 @@ initState appState =
 
 
 processEvent :
-    { parseAppSettings : String -> Result String appSettings
-    , processEvent : AppEventContext appSettings -> AppEvent -> appState -> ( appState, AppEventResponse )
-    }
+    AppConfiguration appSettings appState
     -> InterfaceToHost.AppEvent
     -> StateIncludingFramework appSettings appState
     -> ( StateIncludingFramework appSettings appState, InterfaceToHost.AppResponse )
-processEvent appConfiguration fromHostEvent stateBefore =
+processEvent appConfiguration fromHostEvent stateBeforeUpdateTime =
     let
-        continueAfterIntegrateEvent =
-            processEventAfterIntegrateEvent { processEvent = appConfiguration.processEvent }
-    in
-    case fromHostEvent of
-        InterfaceToHost.ArrivedAtTime { timeInMilliseconds } ->
-            continueAfterIntegrateEvent Nothing { stateBefore | timeInMilliseconds = timeInMilliseconds }
+        stateBefore =
+            { stateBeforeUpdateTime | timeInMilliseconds = fromHostEvent.timeInMilliseconds }
 
-        InterfaceToHost.CompletedTask taskComplete ->
+        continueAfterIntegrateEvent =
+            processEventAfterIntegrateEvent appConfiguration
+    in
+    case fromHostEvent.eventAtTime of
+        InterfaceToHost.TimeArrivedEvent ->
+            continueAfterIntegrateEvent Nothing stateBefore
+
+        InterfaceToHost.TaskCompletedEvent taskComplete ->
             let
                 ( setupState, maybeAppEventFromTaskComplete ) =
                     stateBefore.setup
@@ -277,11 +257,12 @@ processEvent appConfiguration fromHostEvent stateBefore =
                 maybeAppEventFromTaskComplete
                 { stateBefore | setup = setupState, taskInProgress = Nothing }
 
-        InterfaceToHost.SetAppSettings appSettings ->
+        InterfaceToHost.AppSettingsChangedEvent appSettings ->
             case appConfiguration.parseAppSettings appSettings of
                 Err parseSettingsError ->
                     ( stateBefore
-                    , InterfaceToHost.FinishSession { statusDescriptionText = "Failed to parse these app-settings: " ++ parseSettingsError }
+                    , InterfaceToHost.FinishSession
+                        { statusDescriptionText = "Failed to parse these app-settings: " ++ parseSettingsError }
                     )
 
                 Ok parsedAppSettings ->
@@ -289,19 +270,18 @@ processEvent appConfiguration fromHostEvent stateBefore =
                     , InterfaceToHost.ContinueSession
                         { statusDescriptionText = "Succeeded parsing these app-settings."
                         , startTasks = []
-                        , notifyWhenArrivedAtTime = Just { timeInMilliseconds = stateBefore.timeInMilliseconds + 300 }
+                        , notifyWhenArrivedAtTime = Just { timeInMilliseconds = 0 }
                         }
                     )
 
-        InterfaceToHost.SetSessionTimeLimit sessionTimeLimit ->
+        InterfaceToHost.SessionDurationPlannedEvent sessionTimeLimit ->
             continueAfterIntegrateEvent
                 Nothing
                 { stateBefore | sessionTimeLimitInMilliseconds = Just sessionTimeLimit.timeInMilliseconds }
 
 
 processEventAfterIntegrateEvent :
-    { processEvent : AppEventContext appSettings -> AppEvent -> appState -> ( appState, AppEventResponse )
-    }
+    AppConfiguration appSettings appState
     -> Maybe AppEvent
     -> StateIncludingFramework appSettings appState
     -> ( StateIncludingFramework appSettings appState, InterfaceToHost.AppResponse )
@@ -311,7 +291,7 @@ processEventAfterIntegrateEvent appConfiguration maybeAppEvent stateBefore =
             case stateBefore.taskInProgress of
                 Nothing ->
                     processEventNotWaitingForTaskCompletion
-                        appConfiguration.processEvent
+                        appConfiguration
                         (maybeAppEvent
                             |> Maybe.map
                                 (\appEvent ->
@@ -328,7 +308,7 @@ processEventAfterIntegrateEvent appConfiguration maybeAppEvent stateBefore =
                 Just taskInProgress ->
                     ( stateBefore
                     , { statusDescriptionText = "Waiting for completion of task '" ++ taskInProgress.taskIdString ++ "': " ++ taskInProgress.taskDescription
-                      , notifyWhenArrivedAtTime = Just { timeInMilliseconds = stateBefore.timeInMilliseconds + 300 }
+                      , notifyWhenArrivedAtTime = Just { timeInMilliseconds = stateBefore.timeInMilliseconds + 2000 }
                       , startTasks = []
                       }
                         |> InterfaceToHost.ContinueSession
@@ -337,11 +317,22 @@ processEventAfterIntegrateEvent appConfiguration maybeAppEvent stateBefore =
         statusMessagePrefix =
             (state |> statusReportFromState) ++ "\nCurrent activity: "
 
+        notifyWhenArrivedAtTimeUpperBound =
+            stateBefore.timeInMilliseconds + 2000
+
         response =
             case responseBeforeAddingStatusMessage of
                 InterfaceToHost.ContinueSession continueSession ->
                     { continueSession
                         | statusDescriptionText = statusMessagePrefix ++ continueSession.statusDescriptionText
+                        , notifyWhenArrivedAtTime =
+                            Just
+                                { timeInMilliseconds =
+                                    continueSession.notifyWhenArrivedAtTime
+                                        |> Maybe.map .timeInMilliseconds
+                                        |> Maybe.withDefault notifyWhenArrivedAtTimeUpperBound
+                                        |> min notifyWhenArrivedAtTimeUpperBound
+                                }
                     }
                         |> InterfaceToHost.ContinueSession
 
@@ -355,12 +346,12 @@ processEventAfterIntegrateEvent appConfiguration maybeAppEvent stateBefore =
 
 
 processEventNotWaitingForTaskCompletion :
-    (AppEventContext appSettings -> AppEvent -> appState -> ( appState, AppEventResponse ))
+    AppConfiguration appSettings appState
     -> Maybe ( AppEvent, AppEventContext appSettings )
     -> StateIncludingFramework appSettings appState
     -> ( StateIncludingFramework appSettings appState, InterfaceToHost.AppResponse )
-processEventNotWaitingForTaskCompletion appProcessEvent maybeAppEvent stateBefore =
-    case stateBefore.setup |> getNextSetupTask of
+processEventNotWaitingForTaskCompletion appConfiguration maybeAppEvent stateBefore =
+    case stateBefore.setup |> getNextSetupTask appConfiguration stateBefore.appSettings of
         ContinueSetup setupState setupTask setupTaskDescription ->
             let
                 taskIndex =
@@ -381,7 +372,7 @@ processEventNotWaitingForTaskCompletion appProcessEvent maybeAppEvent stateBefor
               }
             , { startTasks = [ { taskId = InterfaceToHost.taskIdFromString taskIdString, task = setupTask } ]
               , statusDescriptionText = "Continue setup: " ++ setupTaskDescription
-              , notifyWhenArrivedAtTime = Just { timeInMilliseconds = stateBefore.timeInMilliseconds + 1000 }
+              , notifyWhenArrivedAtTime = Just { timeInMilliseconds = stateBefore.timeInMilliseconds + 2000 }
               }
                 |> InterfaceToHost.ContinueSession
             )
@@ -420,7 +411,7 @@ processEventNotWaitingForTaskCompletion appProcessEvent maybeAppEvent stateBefor
                           }
                         ]
                   , statusDescriptionText = "Continue setup: " ++ setupTaskDescription
-                  , notifyWhenArrivedAtTime = Just { timeInMilliseconds = stateBefore.timeInMilliseconds + 1000 }
+                  , notifyWhenArrivedAtTime = Just { timeInMilliseconds = stateBefore.timeInMilliseconds + 2000 }
                   }
                     |> InterfaceToHost.ContinueSession
                 )
@@ -433,7 +424,7 @@ processEventNotWaitingForTaskCompletion appProcessEvent maybeAppEvent stateBefor
                     maybeAppEventResult =
                         maybeAppEvent
                             |> Maybe.map
-                                (\( appEvent, appEventContext ) -> appStateBefore.appState |> appProcessEvent appEventContext appEvent)
+                                (\( appEvent, appEventContext ) -> appStateBefore.appState |> appConfiguration.processEvent appEventContext appEvent)
 
                     appStateBeforeProcessEffects =
                         case maybeAppEventResult of
@@ -474,10 +465,10 @@ processEventNotWaitingForTaskCompletion appProcessEvent maybeAppEvent stateBefor
                     appState =
                         { appStateBeforeProcessEffects | effectQueue = appEffectQueue }
 
-                    timeForNextMemoryReadingGeneral =
+                    timeForNextReadingFromGameGeneral =
                         (stateBefore.setup.lastMemoryReading |> Maybe.map .timeInMilliseconds |> Maybe.withDefault 0) + 10000
 
-                    timeForNextMemoryReadingFromApp =
+                    timeForNextReadingFromGameFromApp =
                         appState.lastEvent
                             |> Maybe.andThen
                                 (\appLastEvent ->
@@ -490,11 +481,14 @@ processEventNotWaitingForTaskCompletion appProcessEvent maybeAppEvent stateBefor
                                 )
                             |> Maybe.withDefault 0
 
-                    timeForNextMemoryReading =
-                        min timeForNextMemoryReadingGeneral timeForNextMemoryReadingFromApp
+                    timeForNextReadingFromGame =
+                        min timeForNextReadingFromGameGeneral timeForNextReadingFromGameFromApp
+
+                    remainingTimeToNextReadingFromGame =
+                        timeForNextReadingFromGame - stateBefore.timeInMilliseconds
 
                     memoryReadingTasks =
-                        if timeForNextMemoryReading < stateBefore.timeInMilliseconds then
+                        if remainingTimeToNextReadingFromGame <= 0 then
                             [ operateApp.getMemoryReadingTask ]
 
                         else
@@ -551,7 +545,12 @@ processEventNotWaitingForTaskCompletion appProcessEvent maybeAppEvent stateBefor
                     ( state
                     , { startTasks = startTasks
                       , statusDescriptionText = "Operate app."
-                      , notifyWhenArrivedAtTime = Just { timeInMilliseconds = stateBefore.timeInMilliseconds + 500 }
+                      , notifyWhenArrivedAtTime =
+                            if taskInProgress == Nothing then
+                                Just { timeInMilliseconds = timeForNextReadingFromGame }
+
+                            else
+                                Nothing
                       }
                         |> InterfaceToHost.ContinueSession
                     )
@@ -670,7 +669,7 @@ type NextAppEffectFromQueue
 
 
 dequeueNextEffectFromAppState : { currentTimeInMs : Int } -> AppEffectQueue -> NextAppEffectFromQueue
-dequeueNextEffectFromAppState { currentTimeInMs } effectQueueBefore =
+dequeueNextEffectFromAppState _ effectQueueBefore =
     case effectQueueBefore of
         [] ->
             NoEffect
@@ -682,8 +681,12 @@ dequeueNextEffectFromAppState { currentTimeInMs } effectQueueBefore =
                 }
 
 
-getNextSetupTask : SetupState -> SetupTask
-getNextSetupTask stateBefore =
+getNextSetupTask :
+    AppConfiguration appSettings appState
+    -> Maybe appSettings
+    -> SetupState
+    -> SetupTask
+getNextSetupTask appConfiguration appSettings stateBefore =
     case stateBefore.createVolatileHostResult of
         Nothing ->
             ContinueSetup
@@ -695,11 +698,16 @@ getNextSetupTask stateBefore =
             FrameworkStopSession ("Create volatile host failed with exception: " ++ error.exceptionToString)
 
         Just (Ok createVolatileHostComplete) ->
-            getSetupTaskWhenVolatileHostSetupCompleted stateBefore createVolatileHostComplete.hostId
+            getSetupTaskWhenVolatileHostSetupCompleted appConfiguration appSettings stateBefore createVolatileHostComplete.hostId
 
 
-getSetupTaskWhenVolatileHostSetupCompleted : SetupState -> InterfaceToHost.VolatileHostId -> SetupTask
-getSetupTaskWhenVolatileHostSetupCompleted stateBefore volatileHostId =
+getSetupTaskWhenVolatileHostSetupCompleted :
+    AppConfiguration appSettings appState
+    -> Maybe appSettings
+    -> SetupState
+    -> InterfaceToHost.VolatileHostId
+    -> SetupTask
+getSetupTaskWhenVolatileHostSetupCompleted appConfiguration appSettings stateBefore volatileHostId =
     case stateBefore.searchUIRootAddressResult of
         Nothing ->
             case stateBefore.gameClientProcesses of
@@ -715,7 +723,7 @@ getSetupTaskWhenVolatileHostSetupCompleted stateBefore volatileHostId =
                         "Get list of EVE Online client processes."
 
                 Just gameClientProcesses ->
-                    case gameClientProcesses |> selectGameClientProcess of
+                    case gameClientProcesses |> appConfiguration.selectGameClientInstance appSettings of
                         Err selectGameClientProcessError ->
                             FrameworkStopSession ("Failed to select the game client process: " ++ selectGameClientProcessError)
 
@@ -776,7 +784,7 @@ getSetupTaskWhenVolatileHostSetupCompleted stateBefore volatileHostId =
                                                 case effect of
                                                     EffectOnGameClientWindow effectOnWindow ->
                                                         { windowId = lastCompletedMemoryReading.mainWindowId
-                                                        , task = effectOnWindow
+                                                        , task = effectOnWindow |> effectOnWindowAsVolatileHostEffectOnWindow
                                                         , bringWindowToForeground = True
                                                         }
                                                             |> VolatileHostInterface.EffectOnWindow
@@ -791,10 +799,26 @@ getSetupTaskWhenVolatileHostSetupCompleted stateBefore volatileHostId =
                                         }
 
 
-selectGameClientProcess :
-    List VolatileHostInterface.GameClientProcessSummaryStruct
-    -> Result String { selectedProcess : VolatileHostInterface.GameClientProcessSummaryStruct, report : List String }
-selectGameClientProcess gameClientProcesses =
+effectOnWindowAsVolatileHostEffectOnWindow : Common.EffectOnWindow.EffectOnWindowStructure -> VolatileHostInterface.EffectOnWindowStructure
+effectOnWindowAsVolatileHostEffectOnWindow effectOnWindow =
+    case effectOnWindow of
+        Common.EffectOnWindow.MouseMoveTo mouseMoveTo ->
+            VolatileHostInterface.MouseMoveTo { location = mouseMoveTo }
+
+        Common.EffectOnWindow.SimpleMouseClickAtLocation simpleMouseClickAtLocation ->
+            VolatileHostInterface.SimpleMouseClickAtLocation simpleMouseClickAtLocation
+
+        Common.EffectOnWindow.KeyDown key ->
+            VolatileHostInterface.KeyDown key
+
+        Common.EffectOnWindow.KeyUp key ->
+            VolatileHostInterface.KeyUp key
+
+
+selectGameClientInstanceWithTopmostWindow :
+    List GameClientProcessSummary
+    -> Result String { selectedProcess : GameClientProcessSummary, report : List String }
+selectGameClientInstanceWithTopmostWindow gameClientProcesses =
     case gameClientProcesses |> List.sortBy .mainWindowZIndex |> List.head of
         Nothing ->
             Err "I did not find an EVE Online client process."
@@ -816,6 +840,47 @@ selectGameClientProcess gameClientProcesses =
                         ]
             in
             Ok { selectedProcess = selectedProcess, report = report }
+
+
+selectGameClientInstanceWithPilotName :
+    String
+    -> List GameClientProcessSummary
+    -> Result String { selectedProcess : GameClientProcessSummary, report : List String }
+selectGameClientInstanceWithPilotName pilotName gameClientProcesses =
+    if gameClientProcesses |> List.isEmpty then
+        Err "I did not find an EVE Online client process."
+
+    else
+        case
+            gameClientProcesses
+                |> List.filter (.mainWindowTitle >> String.toLower >> String.contains (pilotName |> String.toLower))
+                |> List.head
+        of
+            Nothing ->
+                Err
+                    ("I did not find an EVE Online client process for the pilot name '"
+                        ++ pilotName
+                        ++ "'. Here is a list of window names of the visible game client instances: "
+                        ++ (gameClientProcesses |> List.map (.mainWindowTitle >> String.Extra.surround "'") |> String.join ", ")
+                    )
+
+            Just selectedProcess ->
+                let
+                    report =
+                        if [ selectedProcess ] == gameClientProcesses then
+                            []
+
+                        else
+                            [ "I found "
+                                ++ (gameClientProcesses |> List.length |> String.fromInt)
+                                ++ " game client processes. I selected process "
+                                ++ (selectedProcess.processId |> String.fromInt)
+                                ++ " ('"
+                                ++ selectedProcess.mainWindowTitle
+                                ++ "') because its main window title matches the given pilot name."
+                            ]
+                in
+                Ok { selectedProcess = selectedProcess, report = report }
 
 
 requestToVolatileHostResultDisplayString : Result String InterfaceToHost.RequestToVolatileHostComplete -> { string : String, isErr : Bool }
@@ -866,19 +931,20 @@ statusReportFromState state =
         appEffectQueueLength =
             state.appState.effectQueue |> List.length
 
-        memoryReadingDurations =
-            state.setup.memoryReadingDurations
-                -- Don't consider the first memory reading because it takes much longer.
-                |> List.reverse
-                |> List.drop 1
+        {-
+           memoryReadingDurations =
+               state.setup.memoryReadingDurations
+                   -- Don't consider the first memory reading because it takes much longer.
+                   |> List.reverse
+                   |> List.drop 1
 
-        averageMemoryReadingDuration =
-            (memoryReadingDurations |> List.sum)
-                // (memoryReadingDurations |> List.length)
+           averageMemoryReadingDuration =
+               (memoryReadingDurations |> List.sum)
+                   // (memoryReadingDurations |> List.length)
 
-        runtimeExpensesReport =
-            "amrd=" ++ (averageMemoryReadingDuration |> String.fromInt) ++ "ms"
-
+           runtimeExpensesReport =
+               "amrd=" ++ (averageMemoryReadingDuration |> String.fromInt) ++ "ms"
+        -}
         appEffectQueueLengthWarning =
             if appEffectQueueLength < 6 then
                 []
@@ -895,6 +961,40 @@ statusReportFromState state =
     ]
         ++ appEffectQueueLengthWarning
         |> String.join "\n"
+
+
+useContextMenuCascadeOnOverviewEntry :
+    UseContextMenuCascadeNode
+    -> EveOnline.ParseUserInterface.OverviewWindowEntry
+    -> DecisionPathNode
+useContextMenuCascadeOnOverviewEntry useContextMenu overviewEntry =
+    useContextMenuCascade
+        ( "overview entry '" ++ (overviewEntry.objectName |> Maybe.withDefault "") ++ "'", overviewEntry.uiNode )
+        useContextMenu
+
+
+useContextMenuCascadeOnListSurroundingsButton : UseContextMenuCascadeNode -> ReadingFromGameClient -> DecisionPathNode
+useContextMenuCascadeOnListSurroundingsButton useContextMenu readingFromGameClient =
+    case readingFromGameClient.infoPanelContainer |> Maybe.andThen .infoPanelLocationInfo of
+        Nothing ->
+            Common.DecisionTree.describeBranch "I do not see the location info panel." askForHelpToGetUnstuck
+
+        Just infoPanelLocationInfo ->
+            useContextMenuCascade
+                ( "surroundings button", infoPanelLocationInfo.listSurroundingsButton )
+                useContextMenu
+
+
+useContextMenuCascade : ( String, UIElement ) -> UseContextMenuCascadeNode -> DecisionPathNode
+useContextMenuCascade ( initialUIElementName, initialUIElement ) useContextMenu =
+    { actionsAlreadyDecided =
+        ( "Open context menu on " ++ initialUIElementName
+        , initialUIElement |> clickOnUIElement Common.EffectOnWindow.MouseButtonRight
+        )
+    , actionsDependingOnNewReadings = useContextMenu |> unpackContextMenuTreeToListOfActionsDependingOnReadings
+    }
+        |> Act
+        |> Common.DecisionTree.endDecisionPath
 
 
 getEntropyIntFromReadingFromGameClient : EveOnline.ParseUserInterface.ParsedUserInterface -> Int
@@ -926,14 +1026,12 @@ getEntropyIntFromReadingFromGameClient readingFromGameClient =
 
         fromOverview =
             readingFromGameClient.overviewWindow
-                |> EveOnline.ParseUserInterface.maybeNothingFromCanNotSeeIt
                 |> Maybe.map .entries
                 |> Maybe.withDefault []
                 |> List.concatMap entropyFromOverviewEntry
 
         fromProbeScanner =
             readingFromGameClient.probeScannerWindow
-                |> EveOnline.ParseUserInterface.maybeNothingFromCanNotSeeIt
                 |> Maybe.map .scanResults
                 |> Maybe.withDefault []
                 |> List.concatMap entropyFromProbeScanResult
@@ -956,9 +1054,9 @@ secondsToSessionEnd appEventContext =
         |> Maybe.map (\sessionTimeLimitInMilliseconds -> (sessionTimeLimitInMilliseconds - appEventContext.timeInMilliseconds) // 1000)
 
 
-clickOnUIElement : Common.EffectOnWindow.MouseButton -> UIElement -> VolatileHostInterface.EffectOnWindowStructure
+clickOnUIElement : Common.EffectOnWindow.MouseButton -> UIElement -> List Common.EffectOnWindow.EffectOnWindowStructure
 clickOnUIElement mouseButton uiElement =
-    effectMouseClickAtLocation mouseButton (uiElement.totalDisplayRegion |> centerFromDisplayRegion)
+    Common.EffectOnWindow.effectsMouseClickAtLocation mouseButton (uiElement.totalDisplayRegion |> centerFromDisplayRegion)
 
 
 type UseContextMenuCascadeNode
@@ -988,8 +1086,8 @@ useMenuEntryWithTextContainingFirstOf priorities =
                         (\textToSearch ->
                             menuEntries
                                 |> List.filter (.text >> String.toLower >> String.contains (textToSearch |> String.toLower))
+                                |> List.sortBy (.text >> String.trim >> String.length)
                         )
-                    |> List.sortBy (.text >> String.trim >> String.length)
                     |> List.head
         }
 
@@ -1036,13 +1134,13 @@ menuCascadeCompleted =
 -}
 unpackContextMenuTreeToListOfActionsDependingOnReadings :
     UseContextMenuCascadeNode
-    -> List ( String, ReadingFromGameClient -> Maybe (List VolatileHostInterface.EffectOnWindowStructure) )
+    -> List ( String, ReadingFromGameClient -> Maybe (List Common.EffectOnWindow.EffectOnWindowStructure) )
 unpackContextMenuTreeToListOfActionsDependingOnReadings treeNode =
     let
         actionFromChoice ( describeChoice, chooseEntry ) =
             ( "Click menu entry " ++ describeChoice ++ "."
             , chooseEntry
-                >> Maybe.map (.uiNode >> clickOnUIElement Common.EffectOnWindow.MouseButtonLeft >> List.singleton)
+                >> Maybe.map (.uiNode >> clickOnUIElement Common.EffectOnWindow.MouseButtonLeft)
             )
 
         listFromNextChoiceAndFollowingNodes nextChoice following =
@@ -1079,3 +1177,289 @@ pickEntryFromLastContextMenuInCascade pickEntry =
 lastContextMenuOrSubmenu : ReadingFromGameClient -> Maybe EveOnline.ParseUserInterface.ContextMenu
 lastContextMenuOrSubmenu =
     .contextMenus >> List.head
+
+
+infoPanelRouteFirstMarkerFromReadingFromGameClient : ReadingFromGameClient -> Maybe EveOnline.ParseUserInterface.InfoPanelRouteRouteElementMarker
+infoPanelRouteFirstMarkerFromReadingFromGameClient =
+    .infoPanelContainer
+        >> Maybe.andThen .infoPanelRoute
+        >> Maybe.map .routeElementMarker
+        >> Maybe.map (List.sortBy (\routeMarker -> routeMarker.uiNode.totalDisplayRegion.x + routeMarker.uiNode.totalDisplayRegion.y))
+        >> Maybe.andThen List.head
+
+
+localChatWindowFromUserInterface : ReadingFromGameClient -> Maybe EveOnline.ParseUserInterface.ChatWindow
+localChatWindowFromUserInterface =
+    .chatWindowStacks
+        >> List.filterMap .chatWindow
+        >> List.filter (.name >> Maybe.map (String.endsWith "_local") >> Maybe.withDefault False)
+        >> List.head
+
+
+shipUIIndicatesShipIsWarpingOrJumping : EveOnline.ParseUserInterface.ShipUI -> Bool
+shipUIIndicatesShipIsWarpingOrJumping =
+    .indication
+        >> Maybe.andThen .maneuverType
+        >> Maybe.map
+            (\maneuverType ->
+                [ EveOnline.ParseUserInterface.ManeuverWarp, EveOnline.ParseUserInterface.ManeuverJump ]
+                    |> List.member maneuverType
+            )
+        -- If the ship is just floating in space, there might be no indication displayed.
+        >> Maybe.withDefault False
+
+
+type alias TreeLeafAct =
+    { actionsAlreadyDecided : ( String, List Common.EffectOnWindow.EffectOnWindowStructure )
+    , actionsDependingOnNewReadings : List ( String, ReadingFromGameClient -> Maybe (List Common.EffectOnWindow.EffectOnWindowStructure) )
+    }
+
+
+type EndDecisionPathStructure
+    = Wait
+    | Act TreeLeafAct
+    | DecideFinishSession
+
+
+type alias DecisionPathNode =
+    Common.DecisionTree.DecisionPathNode EndDecisionPathStructure
+
+
+type alias StepDecisionContext appSettings appMemory =
+    { eventContext : AppEventContext appSettings
+    , readingFromGameClient : ReadingFromGameClient
+    , memory : appMemory
+    }
+
+
+type alias AppStateWithMemoryAndDecisionTree appMemory =
+    { programState :
+        Maybe
+            { originalDecision : DecisionPathNode
+            , remainingActions : List ( String, ReadingFromGameClient -> Maybe (List Common.EffectOnWindow.EffectOnWindowStructure) )
+            }
+    , appMemory : appMemory
+    }
+
+
+type alias SeeUndockingComplete =
+    { shipUI : EveOnline.ParseUserInterface.ShipUI
+    , overviewWindow : EveOnline.ParseUserInterface.OverviewWindow
+    }
+
+
+ensureInfoPanelLocationInfoIsExpanded : ReadingFromGameClient -> Maybe DecisionPathNode
+ensureInfoPanelLocationInfoIsExpanded readingFromGameClient =
+    case readingFromGameClient.infoPanelContainer |> Maybe.andThen .infoPanelLocationInfo of
+        Nothing ->
+            Just
+                (Common.DecisionTree.describeBranch "I do not see the location info panel. Enable the info panel."
+                    (case readingFromGameClient.infoPanelContainer |> Maybe.andThen .icons |> Maybe.andThen .locationInfo of
+                        Nothing ->
+                            Common.DecisionTree.describeBranch "I do not see the icon for the location info panel." askForHelpToGetUnstuck
+
+                        Just iconLocationInfoPanel ->
+                            Common.DecisionTree.endDecisionPath
+                                (actWithoutFurtherReadings
+                                    ( "Click on the icon to enable the info panel."
+                                    , iconLocationInfoPanel |> clickOnUIElement Common.EffectOnWindow.MouseButtonLeft
+                                    )
+                                )
+                    )
+                )
+
+        Just infoPanelLocationInfo ->
+            if 35 < infoPanelLocationInfo.uiNode.totalDisplayRegion.height then
+                Nothing
+
+            else
+                Just
+                    (Common.DecisionTree.describeBranch "Location info panel seems collapsed."
+                        (Common.DecisionTree.endDecisionPath
+                            (actWithoutFurtherReadings
+                                ( "Click to expand the info panel."
+                                , Common.EffectOnWindow.effectsMouseClickAtLocation
+                                    Common.EffectOnWindow.MouseButtonLeft
+                                    { x = infoPanelLocationInfo.uiNode.totalDisplayRegion.x + 8
+                                    , y = infoPanelLocationInfo.uiNode.totalDisplayRegion.y + 8
+                                    }
+                                )
+                            )
+                        )
+                    )
+
+
+branchDependingOnDockedOrInSpace :
+    { ifDocked : DecisionPathNode
+    , ifSeeShipUI : EveOnline.ParseUserInterface.ShipUI -> Maybe DecisionPathNode
+    , ifUndockingComplete : SeeUndockingComplete -> DecisionPathNode
+    }
+    -> ReadingFromGameClient
+    -> DecisionPathNode
+branchDependingOnDockedOrInSpace { ifDocked, ifSeeShipUI, ifUndockingComplete } readingFromGameClient =
+    case readingFromGameClient.shipUI of
+        Nothing ->
+            Common.DecisionTree.describeBranch "I see no ship UI, assume we are docked." ifDocked
+
+        Just shipUI ->
+            ifSeeShipUI shipUI
+                |> Maybe.withDefault
+                    (case readingFromGameClient.overviewWindow of
+                        Nothing ->
+                            Common.DecisionTree.describeBranch
+                                "I see no overview window, wait until undocking completed."
+                                waitForProgressInGame
+
+                        Just overviewWindow ->
+                            Common.DecisionTree.describeBranch "I see ship UI and overview, undocking complete."
+                                (ifUndockingComplete
+                                    { shipUI = shipUI, overviewWindow = overviewWindow }
+                                )
+                    )
+
+
+waitForProgressInGame : DecisionPathNode
+waitForProgressInGame =
+    Common.DecisionTree.endDecisionPath Wait
+
+
+askForHelpToGetUnstuck : DecisionPathNode
+askForHelpToGetUnstuck =
+    Common.DecisionTree.describeBranch "I am stuck here and need help to continue."
+        (Common.DecisionTree.endDecisionPath Wait)
+
+
+readShipUIModuleButtonTooltipWhereNotYetInMemory :
+    { a
+        | readingFromGameClient : ReadingFromGameClient
+        , memory : { b | shipModules : ShipModulesMemory }
+    }
+    -> Maybe DecisionPathNode
+readShipUIModuleButtonTooltipWhereNotYetInMemory context =
+    context.readingFromGameClient.shipUI
+        |> Maybe.map .moduleButtons
+        |> Maybe.withDefault []
+        |> List.filter (getModuleButtonTooltipFromModuleButton context.memory.shipModules >> (==) Nothing)
+        |> List.head
+        |> Maybe.map
+            (\moduleButtonWithoutMemoryOfTooltip ->
+                Common.DecisionTree.endDecisionPath
+                    (actWithoutFurtherReadings
+                        ( "Read tooltip for module button"
+                        , [ Common.EffectOnWindow.MouseMoveTo
+                                (moduleButtonWithoutMemoryOfTooltip.uiNode.totalDisplayRegion |> centerFromDisplayRegion)
+                          ]
+                        )
+                    )
+            )
+
+
+actWithoutFurtherReadings : ( String, List Common.EffectOnWindow.EffectOnWindowStructure ) -> EndDecisionPathStructure
+actWithoutFurtherReadings actionsAlreadyDecided =
+    Act { actionsAlreadyDecided = actionsAlreadyDecided, actionsDependingOnNewReadings = [] }
+
+
+initStateWithMemoryAndDecisionTree : appMemory -> AppStateWithMemoryAndDecisionTree appMemory
+initStateWithMemoryAndDecisionTree appMemory =
+    { programState = Nothing
+    , appMemory = appMemory
+    }
+
+
+processEveOnlineAppEventWithMemoryAndDecisionTree :
+    { updateMemoryForNewReadingFromGame : ReadingFromGameClient -> appMemory -> appMemory
+    , statusTextFromState : StepDecisionContext appSettings appMemory -> String
+    , decisionTreeRoot : StepDecisionContext appSettings appMemory -> DecisionPathNode
+    , millisecondsToNextReadingFromGame : StepDecisionContext appSettings appMemory -> Int
+    }
+    -> AppEventContext appSettings
+    -> AppEvent
+    -> AppStateWithMemoryAndDecisionTree appMemory
+    -> ( AppStateWithMemoryAndDecisionTree appMemory, AppEventResponse )
+processEveOnlineAppEventWithMemoryAndDecisionTree config eventContext event stateBefore =
+    case event of
+        ReadingFromGameClientCompleted readingFromGameClient ->
+            let
+                appMemory =
+                    stateBefore.appMemory |> config.updateMemoryForNewReadingFromGame readingFromGameClient
+
+                decisionContext =
+                    { eventContext = eventContext
+                    , memory = appMemory
+                    , readingFromGameClient = readingFromGameClient
+                    }
+
+                programStateIfEvalDecisionTreeNew =
+                    let
+                        originalDecision =
+                            config.decisionTreeRoot decisionContext
+
+                        originalRemainingActions =
+                            case Common.DecisionTree.unpackToDecisionStagesDescriptionsAndLeaf originalDecision |> Tuple.second of
+                                Wait ->
+                                    []
+
+                                Act act ->
+                                    (act.actionsAlreadyDecided |> Tuple.mapSecond (Just >> always))
+                                        :: act.actionsDependingOnNewReadings
+
+                                DecideFinishSession ->
+                                    []
+                    in
+                    { originalDecision = originalDecision, remainingActions = originalRemainingActions }
+
+                programStateToContinue =
+                    stateBefore.programState
+                        |> Maybe.andThen
+                            (\previousProgramState ->
+                                if 0 < (previousProgramState.remainingActions |> List.length) then
+                                    Just previousProgramState
+
+                                else
+                                    Nothing
+                            )
+                        |> Maybe.withDefault programStateIfEvalDecisionTreeNew
+
+                ( originalDecisionStagesDescriptions, originalDecisionLeaf ) =
+                    Common.DecisionTree.unpackToDecisionStagesDescriptionsAndLeaf programStateToContinue.originalDecision
+
+                ( currentStepDescription, effectsOnGameClientWindow, programState ) =
+                    case programStateToContinue.remainingActions of
+                        [] ->
+                            ( "Wait", [], Nothing )
+
+                        ( nextActionDescription, nextActionEffectFromGameClient ) :: remainingActions ->
+                            case readingFromGameClient |> nextActionEffectFromGameClient of
+                                Nothing ->
+                                    ( "Failed step: " ++ nextActionDescription, [], Nothing )
+
+                                Just effects ->
+                                    ( nextActionDescription
+                                    , effects
+                                    , Just { programStateToContinue | remainingActions = remainingActions }
+                                    )
+
+                effectsRequests =
+                    effectsOnGameClientWindow |> List.map EffectOnGameClientWindow
+
+                describeActivity =
+                    (originalDecisionStagesDescriptions ++ [ currentStepDescription ])
+                        |> List.indexedMap
+                            (\decisionLevel -> (++) (("+" |> List.repeat (decisionLevel + 1) |> String.join "") ++ " "))
+                        |> String.join "\n"
+
+                statusMessage =
+                    [ config.statusTextFromState decisionContext, describeActivity ]
+                        |> String.join "\n"
+            in
+            ( { stateBefore | appMemory = appMemory, programState = programState }
+            , if originalDecisionLeaf == DecideFinishSession then
+                FinishSession { statusDescriptionText = statusMessage }
+
+              else
+                ContinueSession
+                    { effects = effectsRequests
+                    , millisecondsToNextReadingFromGame = config.millisecondsToNextReadingFromGame decisionContext
+                    , statusDescriptionText = statusMessage
+                    }
+            )
