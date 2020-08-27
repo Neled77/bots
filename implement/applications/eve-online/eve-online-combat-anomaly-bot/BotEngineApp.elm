@@ -1,4 +1,4 @@
-{- EVE Online combat anomaly bot version 2020-08-24
+{- EVE Online combat anomaly bot version 2020-08-27
    This bot uses the probe scanner to warp to combat anomalies and kills rats using drones and weapon modules.
 
    Setup instructions for the EVE Online client:
@@ -19,8 +19,12 @@
    + `anomaly-name` : Choose the name of anomalies to take. You can use this setting multiple times to select multiple names.
    + `hide-when-neutral-in-local` : Set this to 'yes' to make the bot dock in a station or structure when a neutral or hostile appears in the 'local' chat.
 
-   To combine multiple settings, use a comma (,) to separate the individual assignments. Here is an example of a complete settings string:
-   --app-settings="anomaly-name = Drone Patrol, anomaly-name = Drone Horde, hide-when-neutral-in-local = yes"
+   When using more than one setting, start a new line for each setting in the text input field.
+   Here is an example of a complete settings string:
+
+   anomaly-name = Drone Patrol
+   anomaly-name = Drone Horde
+   hide-when-neutral-in-local = yes
 -}
 {-
    app-catalog-tags:eve-online,anomaly,ratting
@@ -53,6 +57,7 @@ import EveOnline.AppFramework
         , askForHelpToGetUnstuck
         , branchDependingOnDockedOrInSpace
         , clickOnUIElement
+        , ensureInfoPanelLocationInfoIsExpanded
         , getEntropyIntFromReadingFromGameClient
         , localChatWindowFromUserInterface
         , menuCascadeCompleted
@@ -80,13 +85,13 @@ defaultBotSettings =
     { hideWhenNeutralInLocal = AppSettings.No
     , anomalyNames = []
     , maxTargetCount = 3
-    , botStepDelayMilliseconds = 1300
+    , botStepDelayMilliseconds = 1400
     }
 
 
 parseBotSettings : String -> Result String BotSettings
 parseBotSettings =
-    AppSettings.parseSimpleList { assignmentsSeparators = [ ",", "\n" ] }
+    AppSettings.parseSimpleListOfAssignments { assignmentsSeparators = [ ",", "\n" ] }
         {- Names to support with the `--app-settings`, see <https://github.com/Viir/bots/blob/master/guide/how-to-run-a-bot.md#configuring-a-bot> -}
         ([ ( "hide-when-neutral-in-local"
            , AppSettings.valueTypeYesOrNo
@@ -127,72 +132,171 @@ type alias BotState =
 type alias BotMemory =
     { lastDockedStationNameFromInfoPanel : Maybe String
     , shipModules : ShipModulesMemory
+    , shipWarpingInLastReading : Maybe Bool
+    , visitedAnomalies : Dict.Dict String MemoryOfAnomaly
     }
+
+
+type alias MemoryOfAnomaly =
+    { otherPilotsFoundOnArrival : List String }
 
 
 type alias BotDecisionContext =
     EveOnline.AppFramework.StepDecisionContext BotSettings BotMemory
 
 
-botSettingsFromDecisionContext : BotDecisionContext -> BotSettings
-botSettingsFromDecisionContext decisionContext =
-    decisionContext.eventContext.appSettings |> Maybe.withDefault defaultBotSettings
-
-
 type alias State =
     EveOnline.AppFramework.StateIncludingFramework BotSettings BotState
 
 
-probeScanResultsRepresentsMatchingAnomaly : BotSettings -> EveOnline.ParseUserInterface.ProbeScanResult -> Bool
-probeScanResultsRepresentsMatchingAnomaly settings probeScanResult =
-    let
-        isCombatAnomaly =
-            probeScanResult.cellsTexts
-                |> Dict.get "Group"
-                |> Maybe.map (String.toLower >> String.contains "combat")
-                |> Maybe.withDefault False
+type ReasonToIgnoreProbeScanResult
+    = ScanResultHasNoID
+    | AvoidAnomaly ReasonToAvoidAnomaly
 
-        matchesNameFromSettings =
-            (settings.anomalyNames |> List.isEmpty)
-                || (settings.anomalyNames
-                        |> List.any
-                            (\anomalyName ->
-                                probeScanResult.cellsTexts
-                                    |> Dict.get "Name"
-                                    |> Maybe.map (String.toLower >> (==) (anomalyName |> String.toLower |> String.trim))
-                                    |> Maybe.withDefault False
-                            )
-                   )
-    in
-    isCombatAnomaly && matchesNameFromSettings
+
+type ReasonToAvoidAnomaly
+    = IsNoCombatAnomaly
+    | DoesNotMatchAnomalyNameFromSettings
+    | FoundOtherPilotOnArrival String
+
+
+describeReasonToAvoidAnomaly : ReasonToAvoidAnomaly -> String
+describeReasonToAvoidAnomaly reason =
+    case reason of
+        IsNoCombatAnomaly ->
+            "Is not a combat anomaly"
+
+        DoesNotMatchAnomalyNameFromSettings ->
+            "Does not match an anomaly name from the settings"
+
+        FoundOtherPilotOnArrival otherPilot ->
+            "Found another pilot on arrival: " ++ otherPilot
+
+
+findReasonToIgnoreProbeScanResult : BotDecisionContext -> EveOnline.ParseUserInterface.ProbeScanResult -> Maybe ReasonToIgnoreProbeScanResult
+findReasonToIgnoreProbeScanResult context probeScanResult =
+    case probeScanResult.cellsTexts |> Dict.get "ID" of
+        Nothing ->
+            Just ScanResultHasNoID
+
+        Just scanResultID ->
+            let
+                isCombatAnomaly =
+                    probeScanResult.cellsTexts
+                        |> Dict.get "Group"
+                        |> Maybe.map (String.toLower >> String.contains "combat")
+                        |> Maybe.withDefault False
+
+                matchesAnomalyNameFromSettings =
+                    (context.eventContext.appSettings.anomalyNames |> List.isEmpty)
+                        || (context.eventContext.appSettings.anomalyNames
+                                |> List.any
+                                    (\anomalyName ->
+                                        probeScanResult.cellsTexts
+                                            |> Dict.get "Name"
+                                            |> Maybe.map (String.toLower >> (==) (anomalyName |> String.toLower |> String.trim))
+                                            |> Maybe.withDefault False
+                                    )
+                           )
+            in
+            if not isCombatAnomaly then
+                Just (AvoidAnomaly IsNoCombatAnomaly)
+
+            else if not matchesAnomalyNameFromSettings then
+                Just (AvoidAnomaly DoesNotMatchAnomalyNameFromSettings)
+
+            else
+                findReasonToAvoidAnomalyFromMemory context { anomalyID = scanResultID }
+                    |> Maybe.map AvoidAnomaly
+
+
+findReasonToAvoidAnomalyFromMemory : BotDecisionContext -> { anomalyID : String } -> Maybe ReasonToAvoidAnomaly
+findReasonToAvoidAnomalyFromMemory context { anomalyID } =
+    case memoryOfAnomalyWithID anomalyID context.memory of
+        Nothing ->
+            Nothing
+
+        Just memoryOfAnomaly ->
+            case memoryOfAnomaly.otherPilotsFoundOnArrival of
+                otherPilotFoundOnArrival :: _ ->
+                    Just (FoundOtherPilotOnArrival otherPilotFoundOnArrival)
+
+                [] ->
+                    Nothing
+
+
+memoryOfAnomalyWithID : String -> BotMemory -> Maybe MemoryOfAnomaly
+memoryOfAnomalyWithID anomalyID =
+    .visitedAnomalies >> Dict.get anomalyID
 
 
 anomalyBotDecisionRoot : BotDecisionContext -> DecisionPathNode
 anomalyBotDecisionRoot context =
-    branchDependingOnDockedOrInSpace
-        { ifDocked =
-            continueIfShouldHide
-                { ifShouldHide =
-                    describeBranch "Stay docked." waitForProgressInGame
+    generalSetupInUserInterface context.readingFromGameClient
+        |> Maybe.withDefault
+            (branchDependingOnDockedOrInSpace
+                { ifDocked =
+                    continueIfShouldHide
+                        { ifShouldHide =
+                            describeBranch "Stay docked." waitForProgressInGame
+                        }
+                        context
+                        |> Maybe.withDefault (undockUsingStationWindow context)
+                , ifSeeShipUI =
+                    always
+                        (continueIfShouldHide
+                            { ifShouldHide =
+                                returnDronesToBay context.readingFromGameClient
+                                    |> Maybe.withDefault
+                                        (describeBranch
+                                            "Dock to station or structure."
+                                            (dockAtRandomStationOrStructure context.readingFromGameClient)
+                                        )
+                            }
+                            context
+                        )
+                , ifUndockingComplete = decideNextActionWhenInSpace context
                 }
-                context
-                |> Maybe.withDefault (undockUsingStationWindow context)
-        , ifSeeShipUI =
-            always
-                (continueIfShouldHide
-                    { ifShouldHide =
-                        returnDronesToBay context.readingFromGameClient
-                            |> Maybe.withDefault
-                                (describeBranch
-                                    "Dock to station or structure."
-                                    (dockAtRandomStationOrStructure context.readingFromGameClient)
+                context.readingFromGameClient
+            )
+
+
+generalSetupInUserInterface : ReadingFromGameClient -> Maybe DecisionPathNode
+generalSetupInUserInterface readingFromGameClient =
+    [ closeMessageBox, ensureInfoPanelLocationInfoIsExpanded ]
+        |> List.filterMap
+            (\maybeSetupDecisionFromGameReading ->
+                maybeSetupDecisionFromGameReading readingFromGameClient
+            )
+        |> List.head
+
+
+closeMessageBox : ReadingFromGameClient -> Maybe DecisionPathNode
+closeMessageBox readingFromGameClient =
+    readingFromGameClient.messageBoxes
+        |> List.head
+        |> Maybe.map
+            (\messageBox ->
+                describeBranch "I see a message box to close."
+                    (let
+                        buttonCanBeUsedToClose =
+                            .mainText
+                                >> Maybe.map (String.trim >> String.toLower >> (\buttonText -> [ "close", "ok" ] |> List.member buttonText))
+                                >> Maybe.withDefault False
+                     in
+                     case messageBox.buttons |> List.filter buttonCanBeUsedToClose |> List.head of
+                        Nothing ->
+                            describeBranch "I see no way to close this message box." askForHelpToGetUnstuck
+
+                        Just buttonToUse ->
+                            endDecisionPath
+                                (actWithoutFurtherReadings
+                                    ( "Click on button '" ++ (buttonToUse.mainText |> Maybe.withDefault "") ++ "'."
+                                    , buttonToUse.uiNode |> clickOnUIElement MouseButtonLeft
+                                    )
                                 )
-                    }
-                    context
-                )
-        , ifUndockingComplete = decideNextActionWhenInSpace context
-        }
-        context.readingFromGameClient
+                    )
+            )
 
 
 continueIfShouldHide : { ifShouldHide : DecisionPathNode } -> BotDecisionContext -> Maybe DecisionPathNode
@@ -207,7 +311,7 @@ continueIfShouldHide config context =
                 )
 
         Nothing ->
-            if (context |> botSettingsFromDecisionContext).hideWhenNeutralInLocal /= AppSettings.Yes then
+            if context.eventContext.appSettings.hideWhenNeutralInLocal /= AppSettings.Yes then
                 Nothing
 
             else
@@ -302,7 +406,42 @@ decideNextActionWhenInSpace context seeUndockingComplete =
                     )
 
             Nothing ->
-                combat context seeUndockingComplete (enterAnomaly context)
+                let
+                    returnDronesAndEnterAnomaly { ifNoAcceptableAnomalyAvailable } =
+                        returnDronesToBay context.readingFromGameClient
+                            |> Maybe.withDefault
+                                (describeBranch "No drones to return."
+                                    (enterAnomaly { ifNoAcceptableAnomalyAvailable = ifNoAcceptableAnomalyAvailable } context)
+                                )
+
+                    returnDronesAndEnterAnomalyOrWait =
+                        returnDronesAndEnterAnomaly
+                            { ifNoAcceptableAnomalyAvailable =
+                                describeBranch "Wait for a matching anomaly to appear." waitForProgressInGame
+                            }
+                in
+                case context.readingFromGameClient |> getCurrentAnomalyIDAsSeenInProbeScanner of
+                    Nothing ->
+                        describeBranch "Looks like we are not in an anomaly." returnDronesAndEnterAnomalyOrWait
+
+                    Just anomalyID ->
+                        describeBranch ("We are in anomaly '" ++ anomalyID ++ "'")
+                            (case findReasonToAvoidAnomalyFromMemory context { anomalyID = anomalyID } of
+                                Just reasonToAvoidAnomaly ->
+                                    describeBranch
+                                        ("Found a reason to avoid this anomaly: "
+                                            ++ describeReasonToAvoidAnomaly reasonToAvoidAnomaly
+                                        )
+                                        (returnDronesAndEnterAnomaly
+                                            { ifNoAcceptableAnomalyAvailable =
+                                                describeBranch "Get out of this anomaly."
+                                                    (dockAtRandomStationOrStructure context.readingFromGameClient)
+                                            }
+                                        )
+
+                                Nothing ->
+                                    combat context seeUndockingComplete returnDronesAndEnterAnomalyOrWait
+                            )
 
 
 undockUsingStationWindow : BotDecisionContext -> DecisionPathNode
@@ -349,10 +488,6 @@ combat context seeUndockingComplete continueIfCombatComplete =
             else
                 context.readingFromGameClient.targets |> List.filter .isActiveTarget
 
-        seeingOtherPilotInOverview =
-            seeUndockingComplete.overviewWindow.entries
-                |> List.any (.objectAlliance >> Maybe.map (String.isEmpty >> not) >> Maybe.withDefault False)
-
         ensureShipIsOrbitingDecision =
             overviewEntriesToAttack
                 |> List.head
@@ -396,7 +531,7 @@ combat context seeUndockingComplete continueIfCombatComplete =
                                             (launchAndEngageDrones context.readingFromGameClient
                                                 |> Maybe.withDefault
                                                     (describeBranch "No idling drones."
-                                                        (if (context |> botSettingsFromDecisionContext).maxTargetCount <= (context.readingFromGameClient.targets |> List.length) then
+                                                        (if context.eventContext.appSettings.maxTargetCount <= (context.readingFromGameClient.targets |> List.length) then
                                                             describeBranch "Enough locked targets." waitForProgressInGame
 
                                                          else
@@ -422,33 +557,30 @@ combat context seeUndockingComplete continueIfCombatComplete =
                                             )
                                 )
     in
-    if seeingOtherPilotInOverview then
-        describeBranch
-            "I see another pilot in the overview. Skip this anomaly."
-            (returnDronesToBay context.readingFromGameClient
-                |> Maybe.withDefault
-                    (describeBranch "No drones to return." continueIfCombatComplete)
-            )
-
-    else
-        ensureShipIsOrbitingDecision
-            |> Maybe.withDefault decisionIfAlreadyOrbiting
+    ensureShipIsOrbitingDecision |> Maybe.withDefault decisionIfAlreadyOrbiting
 
 
-enterAnomaly : BotDecisionContext -> DecisionPathNode
-enterAnomaly context =
+enterAnomaly : { ifNoAcceptableAnomalyAvailable : DecisionPathNode } -> BotDecisionContext -> DecisionPathNode
+enterAnomaly { ifNoAcceptableAnomalyAvailable } context =
     case context.readingFromGameClient.probeScannerWindow of
         Nothing ->
             describeBranch "I do not see the probe scanner window." askForHelpToGetUnstuck
 
         Just probeScannerWindow ->
             let
-                matchingScanResults =
+                scanResultsWithReasonToIgnore =
                     probeScannerWindow.scanResults
-                        |> List.filter (probeScanResultsRepresentsMatchingAnomaly (context |> botSettingsFromDecisionContext))
+                        |> List.map
+                            (\scanResult ->
+                                ( scanResult
+                                , findReasonToIgnoreProbeScanResult context scanResult
+                                )
+                            )
             in
             case
-                matchingScanResults
+                scanResultsWithReasonToIgnore
+                    |> List.filter (Tuple.second >> (==) Nothing)
+                    |> List.map Tuple.first
                     |> listElementAtWrappedIndex (getEntropyIntFromReadingFromGameClient context.readingFromGameClient)
             of
                 Nothing ->
@@ -457,7 +589,7 @@ enterAnomaly context =
                             ++ (probeScannerWindow.scanResults |> List.length |> String.fromInt)
                             ++ " scan results, and no matching anomaly. Wait for a matching anomaly to appear."
                         )
-                        waitForProgressInGame
+                        ifNoAcceptableAnomalyAvailable
 
                 Just anomalyScanResult ->
                     describeBranch "Warp to anomaly."
@@ -573,6 +705,8 @@ initState =
         (EveOnline.AppFramework.initStateWithMemoryAndDecisionTree
             { lastDockedStationNameFromInfoPanel = Nothing
             , shipModules = EveOnline.AppFramework.initShipModulesMemory
+            , shipWarpingInLastReading = Nothing
+            , visitedAnomalies = Dict.empty
             }
         )
 
@@ -596,7 +730,7 @@ processEveOnlineBotEvent =
         { updateMemoryForNewReadingFromGame = updateMemoryForNewReadingFromGame
         , statusTextFromState = statusTextFromState
         , decisionTreeRoot = anomalyBotDecisionRoot
-        , millisecondsToNextReadingFromGame = botSettingsFromDecisionContext >> .botStepDelayMilliseconds
+        , millisecondsToNextReadingFromGame = .eventContext >> .appSettings >> .botStepDelayMilliseconds
         }
 
 
@@ -606,59 +740,63 @@ statusTextFromState context =
         readingFromGameClient =
             context.readingFromGameClient
 
-        combatInfoLines =
-            [ "Overview entries to attack: " ++ (readingFromGameClient |> allOverviewEntriesToAttack |> Maybe.map (List.length >> String.fromInt) |> Maybe.withDefault "Nothing") ]
+        describePerformance =
+            "Visited anomalies: " ++ (context.memory.visitedAnomalies |> Dict.size |> String.fromInt) ++ "."
 
-        describeShip =
+        describeCurrentReading =
             case readingFromGameClient.shipUI of
+                Nothing ->
+                    [ "I do not see the ship UI. Looks like we are docked." ]
+
                 Just shipUI ->
-                    "Shield HP at " ++ (shipUI.hitpointsPercent.shield |> String.fromInt) ++ "%."
+                    let
+                        describeShip =
+                            "Shield HP at " ++ (shipUI.hitpointsPercent.shield |> String.fromInt) ++ "%."
 
-                Nothing ->
-                    "I do not see the ship UI. Please set up game client first."
+                        describeDrones =
+                            case readingFromGameClient.dronesWindow of
+                                Nothing ->
+                                    "I do not see the drones window."
 
-        describeDrones =
-            case readingFromGameClient.dronesWindow of
-                Nothing ->
-                    "I do not see the drones window."
+                                Just dronesWindow ->
+                                    "I see the drones window: In bay: "
+                                        ++ (dronesWindow.droneGroupInBay |> Maybe.andThen (.header >> .quantityFromTitle) |> Maybe.map String.fromInt |> Maybe.withDefault "Unknown")
+                                        ++ ", in local space: "
+                                        ++ (dronesWindow.droneGroupInLocalSpace |> Maybe.andThen (.header >> .quantityFromTitle) |> Maybe.map String.fromInt |> Maybe.withDefault "Unknown")
+                                        ++ "."
 
-                Just dronesWindow ->
-                    "I see the drones window: In bay: "
-                        ++ (dronesWindow.droneGroupInBay |> Maybe.andThen (.header >> .quantityFromTitle) |> Maybe.map String.fromInt |> Maybe.withDefault "Unknown")
-                        ++ ", in local space: "
-                        ++ (dronesWindow.droneGroupInLocalSpace |> Maybe.andThen (.header >> .quantityFromTitle) |> Maybe.map String.fromInt |> Maybe.withDefault "Unknown")
-                        ++ "."
+                        namesOfOtherPilotsInOverview =
+                            getNamesOfOtherPilotsInOverview readingFromGameClient
 
-        namesOfOtherPilotsInOverview =
-            getNamesOfOtherPilotsInOverview readingFromGameClient
+                        describeAnomaly =
+                            "Current anomaly: "
+                                ++ (getCurrentAnomalyIDAsSeenInProbeScanner readingFromGameClient |> Maybe.withDefault "None")
+                                ++ "."
 
-        describeAnomaly =
-            "Current anomaly: "
-                ++ (getCurrentAnomalyIDAsSeenInProbeScanner readingFromGameClient |> Maybe.withDefault "None")
-                ++ "."
+                        describeOverview =
+                            ("Seeing "
+                                ++ (namesOfOtherPilotsInOverview |> List.length |> String.fromInt)
+                                ++ " other pilots in the overview"
+                            )
+                                ++ (if namesOfOtherPilotsInOverview == [] then
+                                        ""
 
-        describeOverview =
-            ("Seeing "
-                ++ (namesOfOtherPilotsInOverview |> List.length |> String.fromInt)
-                ++ " other pilots in the overview"
-            )
-                ++ (if namesOfOtherPilotsInOverview == [] then
-                        ""
-
-                    else
-                        ": " ++ (namesOfOtherPilotsInOverview |> String.join ", ")
-                   )
-                ++ "."
+                                    else
+                                        ": " ++ (namesOfOtherPilotsInOverview |> String.join ", ")
+                                   )
+                                ++ "."
+                    in
+                    [ [ describeShip ]
+                    , [ describeDrones ]
+                    , [ describeAnomaly, describeOverview ]
+                    ]
+                        |> List.map (String.join " ")
     in
-    [ [ describeShip ] ++ combatInfoLines ++ [ describeDrones ], [ describeAnomaly, describeOverview ] ]
-        |> List.map (String.join " ")
+    [ [ describePerformance ]
+    , describeCurrentReading
+    ]
+        |> List.concat
         |> String.join "\n"
-
-
-allOverviewEntriesToAttack : ReadingFromGameClient -> Maybe (List EveOnline.ParseUserInterface.OverviewWindowEntry)
-allOverviewEntriesToAttack =
-    .overviewWindow
-        >> Maybe.map (.entries >> List.filter shouldAttackOverviewEntry)
 
 
 overviewEntryIsTargetedOrTargeting : EveOnline.ParseUserInterface.OverviewWindowEntry -> Bool
@@ -701,6 +839,42 @@ updateMemoryForNewReadingFromGame currentReading botMemoryBefore =
                 |> Maybe.andThen .infoPanelLocationInfo
                 |> Maybe.andThen .expandedContent
                 |> Maybe.andThen .currentStationName
+
+        shipIsWarping =
+            currentReading.shipUI
+                |> Maybe.andThen .indication
+                |> Maybe.andThen .maneuverType
+                |> Maybe.map ((==) EveOnline.ParseUserInterface.ManeuverWarp)
+
+        weJustArrivedOnGrid =
+            (botMemoryBefore.shipWarpingInLastReading == Just True) && (shipIsWarping == Just False)
+
+        visitedAnomalies =
+            if shipIsWarping == Just True then
+                botMemoryBefore.visitedAnomalies
+
+            else
+                case currentReading |> getCurrentAnomalyIDAsSeenInProbeScanner of
+                    Nothing ->
+                        botMemoryBefore.visitedAnomalies
+
+                    Just currentAnomalyID ->
+                        let
+                            anomalyMemoryBefore =
+                                botMemoryBefore.visitedAnomalies
+                                    |> Dict.get currentAnomalyID
+                                    |> Maybe.withDefault { otherPilotsFoundOnArrival = [] }
+
+                            anomalyMemory =
+                                if weJustArrivedOnGrid then
+                                    { anomalyMemoryBefore
+                                        | otherPilotsFoundOnArrival = getNamesOfOtherPilotsInOverview currentReading
+                                    }
+
+                                else
+                                    anomalyMemoryBefore
+                        in
+                        botMemoryBefore.visitedAnomalies |> Dict.insert currentAnomalyID anomalyMemory
     in
     { lastDockedStationNameFromInfoPanel =
         [ currentStationNameFromInfoPanel, botMemoryBefore.lastDockedStationNameFromInfoPanel ]
@@ -709,6 +883,8 @@ updateMemoryForNewReadingFromGame currentReading botMemoryBefore =
     , shipModules =
         botMemoryBefore.shipModules
             |> EveOnline.AppFramework.integrateCurrentReadingsIntoShipModulesMemory currentReading
+    , shipWarpingInLastReading = shipIsWarping
+    , visitedAnomalies = visitedAnomalies
     }
 
 
