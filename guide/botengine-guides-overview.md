@@ -9,9 +9,13 @@
 
 + Testing an app using simulations: https://to.botengine.org/guide/testing-an-app-using-simulations
 
++ Running bots on multiple game clients: https://to.botengine.org/guide/running-bots-on-multiple-game-clients
+
 + [Developing for EVE Online](https://to.botengine.org/guide/developing-for-eve-online): Learn how bots and intel tools are developed. Discover the engineering methods and tools behind the most advanced EVE Online bots.
 
 + Syntax of the Elm programming language: https://elm-lang.org/docs/syntax
+
++ Elm programming language - forward pipe (`|>`) and function composition (`>>`) operators: https://to.botengine.org/guide/elm-programming-language-forward-pipe-and-function-composition-operators
 
 + Get a guide for writing Elm code that reads from the EVE Online game client's user interface: Using types from the parsed user interface: https://to.botengine.org/guide/parsed-user-interface-of-the-eve-online-game-client
 
