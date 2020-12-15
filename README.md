@@ -12,6 +12,8 @@ What is more interesting than playing video games? - Programming bots to play vi
 
 + Testing an app using simulations: https://to.botengine.org/guide/testing-an-app-using-simulations
 
++ Input focus scheduling for multiple bot instances: https://to.botengine.org/guide/input-focus-scheduling-for-multiple-bot-instances
+
 + Running bots on multiple game clients: https://to.botengine.org/guide/running-bots-on-multiple-game-clients
 
 + Developing for EVE Online: [./guide/eve-online/developing-for-eve-online.md](./guide/eve-online/developing-for-eve-online.md)
@@ -58,3 +60,8 @@ More links to program codes are listed at [https://catalog.botengine.org](https:
 ## Exploration
 
 In the ['explore'](./explore) subdirectory, I report on explorations in the world of botting in video games. These are raw chronological reports of experiments and discoveries. Some of the approaches and solutions discovered here become seeds for bots and guides.
+
+
+## Experimental Guides
+
++ How to Allow Multiple RDP Sessions in Windows 10: http://woshub.com/how-to-allow-multiple-rdp-sessions-in-windows-10/

@@ -9,6 +9,8 @@
 
 + Testing an app using simulations: https://to.botengine.org/guide/testing-an-app-using-simulations
 
++ Input focus scheduling for multiple bot instances: https://to.botengine.org/guide/input-focus-scheduling-for-multiple-bot-instances
+
 + Running bots on multiple game clients: https://to.botengine.org/guide/running-bots-on-multiple-game-clients
 
 + [Developing for EVE Online](https://to.botengine.org/guide/developing-for-eve-online): Learn how bots and intel tools are developed. Discover the engineering methods and tools behind the most advanced EVE Online bots.
@@ -41,3 +43,7 @@ Wondering what outcome you can expect from following the guides? Below is a list
 
 + [Tribal Wars 2 farmbot](https://to.botengine.org/guide/app/tribal-wars-2-farmbot)
 
+
+## Experimental Guides
+
++ How to Allow Multiple RDP Sessions in Windows 10: http://woshub.com/how-to-allow-multiple-rdp-sessions-in-windows-10/

@@ -26,7 +26,7 @@ Despite being quite robust, this mining bot is far from being as smart as a huma
 
 ## Starting the Mining Bot
 
-To start the mining bot, download the script from https://catalog.botengine.org/d7986d4ff63931036f9428ad89259a9d30d4fc947584576e0f01ce5ed74eb032 and then run it.
+To start the mining bot, download the script from https://catalog.botengine.org/f339178a0a753355aff11e85253e84589dac36819adff86e0301c54a990abe41 and then run it.
 
 In case the botengine program is not yet installed on your system, the script will redirect you to the installation guide at https://to.botengine.org/failed-run-did-not-find-botengine-program
 
@@ -64,6 +64,10 @@ unload-station-name = Noghere VII - Moon 15
 module-to-activate-always = shield hardener
 module-to-activate-always = afterburner
 ```
+
+## Running Multiple Instances
+
+This bot supports running multiple instances on the same desktop. In such a scenario, the individual bot instances take turns sending input and coordinate to avoid interfering with each other's input. To learn more about multi-instance setup, see https://to.botengine.org/guide/running-bots-on-multiple-game-clients
 
 ----
 
