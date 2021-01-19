@@ -1,4 +1,4 @@
-{- EVE Online mining bot version 2020-12-13
+{- EVE Online mining bot version 2021-01-18
    The bot warps to an asteroid belt, mines there until the ore hold is full, and then docks at a station or structure to unload the ore. It then repeats this cycle until you stop it.
    If no station name or structure name is given with the app-settings, the bot docks again at the station where it was last docked.
 
@@ -204,9 +204,15 @@ miningBotDecisionRoot context =
                             }
                             context
                             |> Maybe.withDefault
-                                (ensureOreHoldIsSelectedInInventoryWindow
-                                    context.readingFromGameClient
-                                    (inSpaceWithOreHoldSelected context seeUndockingComplete)
+                                (ensureUserEnabledNameColumnInOverview
+                                    { ifEnabled =
+                                        ensureOreHoldIsSelectedInInventoryWindow
+                                            context.readingFromGameClient
+                                            (inSpaceWithOreHoldSelected context seeUndockingComplete)
+                                    , ifDisabled =
+                                        describeBranch "Please configure the overview to show objects names." askForHelpToGetUnstuck
+                                    }
+                                    seeUndockingComplete
                                 )
                 }
                 context.readingFromGameClient
@@ -1086,6 +1092,18 @@ clickModuleButtonButWaitIfClickedInPreviousStep context moduleButton =
             )
 
 
+ensureUserEnabledNameColumnInOverview : { ifEnabled : DecisionPathNode, ifDisabled : DecisionPathNode } -> SeeUndockingComplete -> DecisionPathNode
+ensureUserEnabledNameColumnInOverview { ifEnabled, ifDisabled } seeUndockingComplete =
+    if
+        (seeUndockingComplete.overviewWindow.entries |> List.all (.objectName >> (==) Nothing))
+            && (0 < List.length seeUndockingComplete.overviewWindow.entries)
+    then
+        describeBranch "The 'Name' column in the overview window seems disabled." ifDisabled
+
+    else
+        ifEnabled
+
+
 activeShipTreeEntryFromInventoryWindow : EveOnline.ParseUserInterface.InventoryWindow -> Maybe EveOnline.ParseUserInterface.InventoryWindowLeftTreeEntry
 activeShipTreeEntryFromInventoryWindow =
     .leftTreeEntries
@@ -1156,24 +1174,6 @@ itemHangarFromInventoryWindow =
         >> List.filter (.text >> String.toLower >> String.contains "item hangar")
         >> List.head
         >> Maybe.map .uiNode
-
-
-{-| The region of a ship entry in the inventory window can contain child nodes (e.g. 'Ore Hold').
-For this reason, we don't click on the center but stay close to the top.
--}
-predictUIElementInventoryShipEntry : EveOnline.ParseUserInterface.InventoryWindowLeftTreeEntry -> UIElement
-predictUIElementInventoryShipEntry treeEntry =
-    let
-        originalUIElement =
-            treeEntry.uiNode
-
-        originalTotalDisplayRegion =
-            originalUIElement.totalDisplayRegion
-
-        totalDisplayRegion =
-            { originalTotalDisplayRegion | height = 10 }
-    in
-    { originalUIElement | totalDisplayRegion = totalDisplayRegion }
 
 
 shipManeuverIsApproaching : ReadingFromGameClient -> Bool
