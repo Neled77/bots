@@ -3,6 +3,8 @@
 
 + Video on how to start a bot or botengine app: https://youtu.be/Q44uTEKw_aA
 
++ How to install/register the `botengine` command: https://to.botengine.org/failed-run-did-not-find-botengine-program
+
 + How to report an issue with an app or request a new feature: https://to.botengine.org/guide/how-to-report-an-issue-with-an-app-or-request-a-new-feature
 
 + Observing and inspecting (aka 'debugging') an app: https://to.botengine.org/guide/observing-and-inspecting-an-app
@@ -13,7 +15,7 @@
 
 + Running bots on multiple game clients: https://to.botengine.org/guide/running-bots-on-multiple-game-clients
 
-+ [Developing for EVE Online](https://to.botengine.org/guide/developing-for-eve-online): Learn how bots and intel tools are developed. Discover the engineering methods and tools behind the most advanced EVE Online bots.
++ Learn how to develop EVE Online bots and intel tools. Discover the engineering methods and tools behind the most advanced bots: https://to.botengine.org/guide/developing-for-eve-online
 
 + Syntax of the Elm programming language: https://elm-lang.org/docs/syntax
 
@@ -23,6 +25,8 @@
 
 + Inspect the UI tree of an EVE Online game client process (live or from archived samples): [Alternate UI for EVE Online](https://to.botengine.org/guide/alternate-ui-for-eve-online)
 
++ [Programming]: Adding a counter to a bot: https://forum.botengine.org/t/i-would-like-to-use-survey-scanner-for-every-even-numbers-of-targets-targetted/3807
+
 + [Walkthrough, Programming]: Making an EVE Online bot see anomalies and other pilots: [https://youtu.be/pL1zLGYn8jQ](https://youtu.be/pL1zLGYn8jQ)
 
 + [Walkthrough, Programming]: Programming an EVE Online mining bot to defend against rats: [https://youtu.be/dgV9Ce7f03I](https://youtu.be/dgV9Ce7f03I)
@@ -30,6 +34,10 @@
 + [Walkthrough, Programming]: Adding a counter to an EVE Online bot: [https://youtu.be/HLerePMeD3w](https://youtu.be/HLerePMeD3w)
 
 + [Walkthrough, Programming]: How to add a setting to a botengine app: [https://youtu.be/A-tbRE9S2ss](https://youtu.be/A-tbRE9S2ss)
+
++ How to collect samples for 64-bit memory reading development: https://to.botengine.org/guide/collect-samples-for-memory-reading-development
+
++ Syntax highlighting of code blocks - How to format code on the forum: https://forum.botengine.org/t/syntax-highlighting-of-code-blocks-how-to-format-code-on-the-forum/738
 
 ## App Examples
 

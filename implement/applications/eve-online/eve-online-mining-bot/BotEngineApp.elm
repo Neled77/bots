@@ -1,4 +1,4 @@
-{- EVE Online mining bot version 2021-01-18
+{- EVE Online mining bot version 2021-01-24
    The bot warps to an asteroid belt, mines there until the ore hold is full, and then docks at a station or structure to unload the ore. It then repeats this cycle until you stop it.
    If no station name or structure name is given with the app-settings, the bot docks again at the station where it was last docked.
 
@@ -41,36 +41,39 @@ module BotEngineApp exposing
 import BotEngine.Interface_To_Host_20201207 as InterfaceToHost
 import Common.AppSettings as AppSettings
 import Common.Basics exposing (listElementAtWrappedIndex)
-import Common.DecisionTree exposing (describeBranch, endDecisionPath)
+import Common.DecisionPath exposing (describeBranch)
 import Common.EffectOnWindow as EffectOnWindow exposing (MouseButton(..))
 import Dict
 import EveOnline.AppFramework
     exposing
         ( AppEffect(..)
-        , DecisionPathNode
-        , EndDecisionPathStructure(..)
         , ReadingFromGameClient
         , SeeUndockingComplete
         , ShipModulesMemory
         , UIElement
-        , actWithoutFurtherReadings
-        , askForHelpToGetUnstuck
-        , branchDependingOnDockedOrInSpace
         , clickOnUIElement
         , doEffectsClickModuleButton
-        , ensureInfoPanelLocationInfoIsExpanded
         , getEntropyIntFromReadingFromGameClient
         , localChatWindowFromUserInterface
         , menuCascadeCompleted
         , shipUIIndicatesShipIsWarpingOrJumping
-        , useContextMenuCascade
-        , useContextMenuCascadeOnListSurroundingsButton
-        , useContextMenuCascadeOnOverviewEntry
         , useMenuEntryInLastContextMenuInCascade
         , useMenuEntryWithTextContaining
         , useMenuEntryWithTextContainingFirstOf
         , useMenuEntryWithTextEqual
         , useRandomMenuEntry
+        )
+import EveOnline.AppFrameworkSeparatingMemory
+    exposing
+        ( DecisionPathNode
+        , EndDecisionPathStructure(..)
+        , askForHelpToGetUnstuck
+        , branchDependingOnDockedOrInSpace
+        , decideActionForCurrentStep
+        , ensureInfoPanelLocationInfoIsExpanded
+        , useContextMenuCascade
+        , useContextMenuCascadeOnListSurroundingsButton
+        , useContextMenuCascadeOnOverviewEntry
         , waitForProgressInGame
         )
 import EveOnline.ParseUserInterface
@@ -94,9 +97,9 @@ defaultBotSettings =
     , unloadStructureName = Nothing
     , modulesToActivateAlways = []
     , hideWhenNeutralInLocal = Nothing
-    , targetingRange = 15000
-    , miningModuleRange = 15000
-    , botStepDelayMilliseconds = 2000
+    , targetingRange = 8000
+    , miningModuleRange = 5000
+    , botStepDelayMilliseconds = 1300
     , oreHoldMaxPercent = 99
     , selectInstancePilotName = Nothing
     }
@@ -171,22 +174,30 @@ type alias BotMemory =
 
 
 type alias BotDecisionContext =
-    EveOnline.AppFramework.StepDecisionContext BotSettings BotMemory
+    EveOnline.AppFrameworkSeparatingMemory.StepDecisionContext BotSettings BotMemory
 
 
 type alias BotState =
-    EveOnline.AppFramework.AppStateWithMemoryAndDecisionTree BotMemory
+    EveOnline.AppFrameworkSeparatingMemory.AppState BotMemory
 
 
 type alias State =
     EveOnline.AppFramework.StateIncludingFramework BotSettings BotState
 
 
-{-| A first outline of the decision tree for a mining bot came from <https://forum.botengine.org/t/how-to-automate-mining-asteroids-in-eve-online/628/109?u=viir>
--}
 miningBotDecisionRoot : BotDecisionContext -> DecisionPathNode
 miningBotDecisionRoot context =
-    generalSetupInUserInterface context.readingFromGameClient
+    miningBotDecisionRootBeforeApplyingSettings context
+        |> EveOnline.AppFrameworkSeparatingMemory.setMillisecondsToNextReadingFromGameBase
+            context.eventContext.appSettings.botStepDelayMilliseconds
+
+
+{-| A first outline of the decision tree for a mining bot came from <https://forum.botengine.org/t/how-to-automate-mining-asteroids-in-eve-online/628/109?u=viir>
+-}
+miningBotDecisionRootBeforeApplyingSettings : BotDecisionContext -> DecisionPathNode
+miningBotDecisionRootBeforeApplyingSettings context =
+    generalSetupInUserInterface
+        context.readingFromGameClient
         |> Maybe.withDefault
             (branchDependingOnDockedOrInSpace
                 { ifDocked =
@@ -199,7 +210,7 @@ miningBotDecisionRoot context =
                     \seeUndockingComplete ->
                         continueIfShouldHide
                             { ifShouldHide =
-                                returnDronesToBay context.readingFromGameClient
+                                returnDronesToBay context
                                     |> Maybe.withDefault (dockToUnloadOre context)
                             }
                             context
@@ -286,7 +297,7 @@ returnDronesAndRunAwayIfHitpointsAreTooLow context shipUI =
         Just runAwayWithDescription
 
     else if shipUI.hitpointsPercent.shield < returnDronesShieldHitpointsThresholdPercent then
-        returnDronesToBay context.readingFromGameClient
+        returnDronesToBay context
             |> Maybe.map
                 (describeBranch
                     ("Shield hitpoints are below " ++ (returnDronesShieldHitpointsThresholdPercent |> String.fromInt) ++ "%. Return drones.")
@@ -326,11 +337,10 @@ closeMessageBox readingFromGameClient =
                             describeBranch "I see no way to close this message box." askForHelpToGetUnstuck
 
                         Just buttonToUse ->
-                            endDecisionPath
-                                (actWithoutFurtherReadings
-                                    ( "Click on button '" ++ (buttonToUse.mainText |> Maybe.withDefault "") ++ "'."
-                                    , buttonToUse.uiNode |> clickOnUIElement MouseButtonLeft
-                                    )
+                            describeBranch
+                                ("Click on button '" ++ (buttonToUse.mainText |> Maybe.withDefault "") ++ "'.")
+                                (decideActionForCurrentStep
+                                    (clickOnUIElement MouseButtonLeft buttonToUse.uiNode)
                                 )
                     )
             )
@@ -356,10 +366,9 @@ dockedWithOreHoldSelected context inventoryWindowWithOreHoldSelected =
 
                 Just itemInInventory ->
                     describeBranch "I see at least one item in the ore hold. Move this to the item hangar."
-                        (endDecisionPath
-                            (actWithoutFurtherReadings
-                                ( "Drag and drop."
-                                , EffectOnWindow.effectsForDragAndDrop
+                        (describeBranch "Drag and drop."
+                            (decideActionForCurrentStep
+                                (EffectOnWindow.effectsForDragAndDrop
                                     { startLocation = itemInInventory.totalDisplayRegion |> centerFromDisplayRegion
                                     , endLocation = itemHangar.totalDisplayRegion |> centerFromDisplayRegion
                                     , mouseButton = MouseButtonLeft
@@ -386,11 +395,9 @@ undockUsingStationWindow context =
                             describeBranch "I see we are already undocking." waitForProgressInGame
 
                 Just undockButton ->
-                    endDecisionPath
-                        (actWithoutFurtherReadings
-                            ( "Click on the button to undock."
-                            , clickOnUIElement MouseButtonLeft undockButton
-                            )
+                    describeBranch "Click on the button to undock."
+                        (decideActionForCurrentStep
+                            (clickOnUIElement MouseButtonLeft undockButton)
                         )
 
 
@@ -398,7 +405,7 @@ inSpaceWithOreHoldSelected : BotDecisionContext -> SeeUndockingComplete -> EveOn
 inSpaceWithOreHoldSelected context seeUndockingComplete inventoryWindowWithOreHoldSelected =
     if seeUndockingComplete.shipUI |> shipUIIndicatesShipIsWarpingOrJumping then
         describeBranch "I see we are warping."
-            ([ returnDronesToBay context.readingFromGameClient
+            ([ returnDronesToBay context
              , readShipUIModuleButtonTooltips context
              ]
                 |> List.filterMap identity
@@ -424,7 +431,7 @@ inSpaceWithOreHoldSelected context seeUndockingComplete inventoryWindowWithOreHo
                         in
                         if context.eventContext.appSettings.oreHoldMaxPercent <= fillPercent then
                             describeBranch ("The ore hold is filled at least " ++ describeThresholdToUnload ++ ". Unload the ore.")
-                                (returnDronesToBay context.readingFromGameClient
+                                (returnDronesToBay context
                                     |> Maybe.withDefault (dockToUnloadOre context)
                                 )
 
@@ -476,7 +483,7 @@ unlockTargetsNotForMining context =
                     (useContextMenuCascade
                         ( "target", targetToUnlock.barAndImageCont |> Maybe.withDefault targetToUnlock.uiNode )
                         (useMenuEntryWithTextContaining "unlock" menuCascadeCompleted)
-                        context.readingFromGameClient
+                        context
                     )
             )
 
@@ -486,19 +493,19 @@ travelToMiningSiteAndLaunchDronesAndTargetAsteroid context =
     case context.readingFromGameClient |> topmostAsteroidFromOverviewWindow of
         Nothing ->
             describeBranch "I see no asteroid in the overview. Warp to mining site."
-                (returnDronesToBay context.readingFromGameClient
+                (returnDronesToBay context
                     |> Maybe.withDefault
-                        (warpToMiningSite context.readingFromGameClient)
+                        (warpToMiningSite context)
                 )
 
         Just asteroidInOverview ->
             describeBranch ("Choosing asteroid '" ++ (asteroidInOverview.objectName |> Maybe.withDefault "Nothing") ++ "'")
                 (warpToOverviewEntryIfFarEnough context asteroidInOverview
                     |> Maybe.withDefault
-                        (launchDrones context.readingFromGameClient
+                        (launchDrones context
                             |> Maybe.withDefault
                                 (lockTargetFromOverviewEntryAndEnsureIsInRange
-                                    context.readingFromGameClient
+                                    context
                                     (min context.eventContext.appSettings.targetingRange
                                         context.eventContext.appSettings.miningModuleRange
                                     )
@@ -518,14 +525,14 @@ warpToOverviewEntryIfFarEnough context destinationOverviewEntry =
             else
                 Just
                     (describeBranch "Far enough to use Warp"
-                        (returnDronesToBay context.readingFromGameClient
+                        (returnDronesToBay context
                             |> Maybe.withDefault
                                 (useContextMenuCascadeOnOverviewEntry
                                     (useMenuEntryWithTextContaining "Warp to Within"
                                         (useMenuEntryWithTextContaining "Within 0 m" menuCascadeCompleted)
                                     )
                                     destinationOverviewEntry
-                                    context.readingFromGameClient
+                                    context
                                 )
                         )
                     )
@@ -569,26 +576,22 @@ ensureOreHoldIsSelectedInInventoryWindow readingFromGameClient continueWithInven
                                                         askForHelpToGetUnstuck
 
                                                 Just toggleBtn ->
-                                                    endDecisionPath
-                                                        (actWithoutFurtherReadings
-                                                            ( "Click the toggle button to expand."
-                                                            , toggleBtn |> clickOnUIElement MouseButtonLeft
-                                                            )
+                                                    describeBranch "Click the toggle button to expand."
+                                                        (decideActionForCurrentStep
+                                                            (clickOnUIElement MouseButtonLeft toggleBtn)
                                                         )
                                             )
 
                                     Just oreHoldTreeEntry ->
-                                        endDecisionPath
-                                            (actWithoutFurtherReadings
-                                                ( "Click the tree entry representing the ore hold."
-                                                , oreHoldTreeEntry.uiNode |> clickOnUIElement MouseButtonLeft
-                                                )
+                                        describeBranch "Click the tree entry representing the ore hold."
+                                            (decideActionForCurrentStep
+                                                (clickOnUIElement MouseButtonLeft oreHoldTreeEntry.uiNode)
                                             )
                         )
 
 
-lockTargetFromOverviewEntryAndEnsureIsInRange : ReadingFromGameClient -> Int -> OverviewWindowEntry -> DecisionPathNode
-lockTargetFromOverviewEntryAndEnsureIsInRange readingFromGameClient rangeInMeters overviewEntry =
+lockTargetFromOverviewEntryAndEnsureIsInRange : BotDecisionContext -> Int -> OverviewWindowEntry -> DecisionPathNode
+lockTargetFromOverviewEntryAndEnsureIsInRange context rangeInMeters overviewEntry =
     case overviewEntry.objectDistanceInMeters of
         Ok distanceInMeters ->
             if distanceInMeters <= rangeInMeters then
@@ -597,62 +600,62 @@ lockTargetFromOverviewEntryAndEnsureIsInRange readingFromGameClient rangeInMeter
 
                 else
                     describeBranch "Object is in range. Lock target."
-                        (lockTargetFromOverviewEntry overviewEntry readingFromGameClient)
+                        (lockTargetFromOverviewEntry overviewEntry context)
 
             else
                 describeBranch ("Object is not in range (" ++ (distanceInMeters |> String.fromInt) ++ " meters away). Approach.")
-                    (if shipManeuverIsApproaching readingFromGameClient then
+                    (if shipManeuverIsApproaching context.readingFromGameClient then
                         describeBranch "I see we already approach." waitForProgressInGame
 
                      else
                         useContextMenuCascadeOnOverviewEntry
                             (useMenuEntryWithTextContaining "approach" menuCascadeCompleted)
                             overviewEntry
-                            readingFromGameClient
+                            context
                     )
 
         Err error ->
             describeBranch ("Failed to read the distance: " ++ error) askForHelpToGetUnstuck
 
 
-lockTargetFromOverviewEntry : OverviewWindowEntry -> ReadingFromGameClient -> DecisionPathNode
-lockTargetFromOverviewEntry overviewEntry readingFromGameClient =
+lockTargetFromOverviewEntry : OverviewWindowEntry -> BotDecisionContext -> DecisionPathNode
+lockTargetFromOverviewEntry overviewEntry context =
     describeBranch ("Lock target from overview entry '" ++ (overviewEntry.objectName |> Maybe.withDefault "") ++ "'")
         (useContextMenuCascadeOnOverviewEntry
             (useMenuEntryWithTextEqual "Lock target" menuCascadeCompleted)
             overviewEntry
-            readingFromGameClient
+            context
         )
 
 
 dockToStationOrStructureWithMatchingName :
     { prioritizeStructures : Bool, nameFromSettingOrInfoPanel : String }
-    -> ReadingFromGameClient
+    -> BotDecisionContext
     -> DecisionPathNode
-dockToStationOrStructureWithMatchingName { prioritizeStructures, nameFromSettingOrInfoPanel } readingFromGameClient =
+dockToStationOrStructureWithMatchingName { prioritizeStructures, nameFromSettingOrInfoPanel } context =
     let
         displayTextRepresentsMatchingStation =
             simplifyStationOrStructureNameFromSettingsBeforeComparingToMenuEntry
                 >> String.startsWith (nameFromSettingOrInfoPanel |> simplifyStationOrStructureNameFromSettingsBeforeComparingToMenuEntry)
 
         matchingOverviewEntry =
-            readingFromGameClient.overviewWindow
+            context.readingFromGameClient.overviewWindow
                 |> Maybe.map .entries
                 |> Maybe.withDefault []
                 |> List.filter (.objectName >> Maybe.map displayTextRepresentsMatchingStation >> Maybe.withDefault False)
                 |> List.head
 
         overviewWindowScrollControls =
-            readingFromGameClient.overviewWindow
+            context.readingFromGameClient.overviewWindow
                 |> Maybe.andThen .scrollControls
     in
     matchingOverviewEntry
         |> Maybe.map
             (\entry ->
-                EveOnline.AppFramework.useContextMenuCascadeOnOverviewEntry
+                EveOnline.AppFrameworkSeparatingMemory.useContextMenuCascadeOnOverviewEntry
                     (useMenuEntryWithTextContaining "dock" menuCascadeCompleted)
                     entry
-                    readingFromGameClient
+                    context
             )
         |> Maybe.withDefault
             (overviewWindowScrollControls
@@ -665,7 +668,7 @@ dockToStationOrStructureWithMatchingName { prioritizeStructures, nameFromSetting
                             , chooseEntry =
                                 List.filter (.text >> displayTextRepresentsMatchingStation) >> List.head
                             }
-                            readingFromGameClient
+                            context
                         )
                     )
             )
@@ -691,10 +694,9 @@ scrollDown scrollControls =
             in
             if 10 < freeHeightAtBottom then
                 Just
-                    (endDecisionPath
-                        (actWithoutFurtherReadings
-                            ( "Click at scroll control bottom"
-                            , EffectOnWindow.effectsMouseClickAtLocation EffectOnWindow.MouseButtonLeft
+                    (describeBranch "Click at scroll control bottom"
+                        (decideActionForCurrentStep
+                            (EffectOnWindow.effectsMouseClickAtLocation EffectOnWindow.MouseButtonLeft
                                 { x = scrollControlsTotalDisplayRegion.x + 3
                                 , y = scrollControlsBottom - 8
                                 }
@@ -729,7 +731,7 @@ dockToStationOrStructureUsingSurroundingsButtonMenu :
     , describeChoice : String
     , chooseEntry : List EveOnline.ParseUserInterface.ContextMenuEntry -> Maybe EveOnline.ParseUserInterface.ContextMenuEntry
     }
-    -> ReadingFromGameClient
+    -> BotDecisionContext
     -> DecisionPathNode
 dockToStationOrStructureUsingSurroundingsButtonMenu { prioritizeStructures, describeChoice, chooseEntry } =
     useContextMenuCascadeOnListSurroundingsButton
@@ -748,23 +750,21 @@ dockToStationOrStructureUsingSurroundingsButtonMenu { prioritizeStructures, desc
         )
 
 
-warpToMiningSite : ReadingFromGameClient -> DecisionPathNode
-warpToMiningSite readingFromGameClient =
-    readingFromGameClient
-        |> useContextMenuCascadeOnListSurroundingsButton
-            (useMenuEntryWithTextContaining "asteroid belts"
-                --(useRandomMenuEntry
-                (useMenuEntryWithTextContaining "Berta VI - Asteroid Belt 11"
-                    (useMenuEntryWithTextContaining "Warp to Within"
-                        (useMenuEntryWithTextContaining "Within 0 m" menuCascadeCompleted)
-                    )
+warpToMiningSite : BotDecisionContext -> DecisionPathNode
+warpToMiningSite =
+    useContextMenuCascadeOnListSurroundingsButton
+        (useMenuEntryWithTextContaining "asteroid belts"
+            (useRandomMenuEntry
+                (useMenuEntryWithTextContaining "Warp to Within"
+                    (useMenuEntryWithTextContaining "Within 0 m" menuCascadeCompleted)
                 )
             )
+        )
 
 
 runAway : BotDecisionContext -> DecisionPathNode
-runAway context =
-    dockToRandomStationOrStructure context.readingFromGameClient
+runAway =
+    dockToRandomStationOrStructure
 
 
 dockToUnloadOre : BotDecisionContext -> DecisionPathNode
@@ -773,32 +773,32 @@ dockToUnloadOre context =
         Just unloadStationName ->
             dockToStationOrStructureWithMatchingName
                 { prioritizeStructures = False, nameFromSettingOrInfoPanel = unloadStationName }
-                context.readingFromGameClient
+                context
 
         Nothing ->
             case context.eventContext.appSettings.unloadStructureName of
                 Just unloadStructureName ->
                     dockToStationOrStructureWithMatchingName
                         { prioritizeStructures = True, nameFromSettingOrInfoPanel = unloadStructureName }
-                        context.readingFromGameClient
+                        context
 
                 Nothing ->
                     describeBranch "At which station should I dock?. I was never docked in a station in this session." askForHelpToGetUnstuck
 
 
-dockToRandomStationOrStructure : ReadingFromGameClient -> DecisionPathNode
-dockToRandomStationOrStructure readingFromGameClient =
+dockToRandomStationOrStructure : BotDecisionContext -> DecisionPathNode
+dockToRandomStationOrStructure context =
     dockToStationOrStructureUsingSurroundingsButtonMenu
         { prioritizeStructures = False
         , describeChoice = "Pick random station"
-        , chooseEntry = listElementAtWrappedIndex (getEntropyIntFromReadingFromGameClient readingFromGameClient)
+        , chooseEntry = listElementAtWrappedIndex (getEntropyIntFromReadingFromGameClient context.readingFromGameClient)
         }
-        readingFromGameClient
+        context
 
 
-launchDrones : ReadingFromGameClient -> Maybe DecisionPathNode
-launchDrones readingFromGameClient =
-    readingFromGameClient.dronesWindow
+launchDrones : BotDecisionContext -> Maybe DecisionPathNode
+launchDrones context =
+    context.readingFromGameClient.dronesWindow
         |> Maybe.andThen
             (\dronesWindow ->
                 case ( dronesWindow.droneGroupInBay, dronesWindow.droneGroupInLocalSpace ) of
@@ -816,7 +816,7 @@ launchDrones readingFromGameClient =
                                     (useContextMenuCascade
                                         ( "drones group", droneGroupInBay.header.uiNode )
                                         (useMenuEntryWithTextContaining "Launch drone" menuCascadeCompleted)
-                                        readingFromGameClient
+                                        context
                                     )
                                 )
 
@@ -828,9 +828,9 @@ launchDrones readingFromGameClient =
             )
 
 
-returnDronesToBay : ReadingFromGameClient -> Maybe DecisionPathNode
-returnDronesToBay readingFromGameClient =
-    readingFromGameClient.dronesWindow
+returnDronesToBay : BotDecisionContext -> Maybe DecisionPathNode
+returnDronesToBay context =
+    context.readingFromGameClient.dronesWindow
         |> Maybe.andThen .droneGroupInLocalSpace
         |> Maybe.andThen
             (\droneGroupInLocalSpace ->
@@ -843,7 +843,7 @@ returnDronesToBay readingFromGameClient =
                             (useContextMenuCascade
                                 ( "drones group", droneGroupInLocalSpace.header.uiNode )
                                 (useMenuEntryWithTextContaining "Return to drone bay" menuCascadeCompleted)
-                                readingFromGameClient
+                                context
                             )
                         )
             )
@@ -851,7 +851,7 @@ returnDronesToBay readingFromGameClient =
 
 readShipUIModuleButtonTooltips : BotDecisionContext -> Maybe DecisionPathNode
 readShipUIModuleButtonTooltips =
-    EveOnline.AppFramework.readShipUIModuleButtonTooltipWhereNotYetInMemory
+    EveOnline.AppFrameworkSeparatingMemory.readShipUIModuleButtonTooltipWhereNotYetInMemory
 
 
 knownMiningModules : BotDecisionContext -> List EveOnline.ParseUserInterface.ShipUIModuleButton
@@ -913,7 +913,7 @@ tooltipLooksLikeModuleToActivateAlways context =
 initState : State
 initState =
     EveOnline.AppFramework.initState
-        (EveOnline.AppFramework.initStateWithMemoryAndDecisionTree
+        (EveOnline.AppFrameworkSeparatingMemory.initAppState
             { lastDockedStationNameFromInfoPanel = Nothing
             , timesUnloaded = 0
             , volumeUnloadedCubicMeters = 0
@@ -941,16 +941,15 @@ processEveOnlineBotEvent :
     -> BotState
     -> ( BotState, EveOnline.AppFramework.AppEventResponse )
 processEveOnlineBotEvent =
-    EveOnline.AppFramework.processEveOnlineAppEventWithMemoryAndDecisionTree
+    EveOnline.AppFrameworkSeparatingMemory.processEveOnlineAppEvent
         { updateMemoryForNewReadingFromGame = updateMemoryForNewReadingFromGame
-        , statusTextFromState = statusTextFromState
-        , decisionTreeRoot = miningBotDecisionRoot
-        , millisecondsToNextReadingFromGame = .eventContext >> .appSettings >> .botStepDelayMilliseconds
+        , statusText = statusTextFromDecisionContext
+        , decideNextAction = miningBotDecisionRoot
         }
 
 
-statusTextFromState : BotDecisionContext -> String
-statusTextFromState context =
+statusTextFromDecisionContext : BotDecisionContext -> String
+statusTextFromDecisionContext context =
     let
         readingFromGameClient =
             context.readingFromGameClient
@@ -1015,17 +1014,17 @@ statusTextFromState context =
         |> String.join "\n"
 
 
-updateMemoryForNewReadingFromGame : ReadingFromGameClient -> BotMemory -> BotMemory
-updateMemoryForNewReadingFromGame currentReading botMemoryBefore =
+updateMemoryForNewReadingFromGame : EveOnline.AppFrameworkSeparatingMemory.UpdateMemoryContext -> BotMemory -> BotMemory
+updateMemoryForNewReadingFromGame context botMemoryBefore =
     let
         currentStationNameFromInfoPanel =
-            currentReading.infoPanelContainer
+            context.readingFromGameClient.infoPanelContainer
                 |> Maybe.andThen .infoPanelLocationInfo
                 |> Maybe.andThen .expandedContent
                 |> Maybe.andThen .currentStationName
 
         lastUsedCapacityInOreHold =
-            currentReading
+            context.readingFromGameClient
                 |> inventoryWindowWithOreHoldSelectedFromGameClient
                 |> Maybe.andThen .selectedContainerCapacityGauge
                 |> Maybe.andThen Result.toMaybe
@@ -1074,7 +1073,7 @@ updateMemoryForNewReadingFromGame currentReading botMemoryBefore =
     , lastUsedCapacityInOreHold = lastUsedCapacityInOreHold
     , shipModules =
         botMemoryBefore.shipModules
-            |> EveOnline.AppFramework.integrateCurrentReadingsIntoShipModulesMemory currentReading
+            |> EveOnline.AppFramework.integrateCurrentReadingsIntoShipModulesMemory context.readingFromGameClient
     }
 
 
@@ -1084,11 +1083,9 @@ clickModuleButtonButWaitIfClickedInPreviousStep context moduleButton =
         describeBranch "Already clicked on this module button in previous step." waitForProgressInGame
 
     else
-        endDecisionPath
-            (actWithoutFurtherReadings
-                ( "Click on this module button."
-                , moduleButton.uiNode |> clickOnUIElement MouseButtonLeft
-                )
+        describeBranch "Click on this module button."
+            (decideActionForCurrentStep
+                (clickOnUIElement MouseButtonLeft moduleButton.uiNode)
             )
 
 
