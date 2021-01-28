@@ -131,7 +131,7 @@ autopilotBotDecisionRoot context =
         , ifUndockingComplete = decisionTreeWhenInSpace context
         }
         context.readingFromGameClient
-        |> EveOnline.AppFrameworkSeparatingMemory.setMillisecondsToNextReadingFromGameBase 5000
+        |> EveOnline.AppFrameworkSeparatingMemory.setMillisecondsToNextReadingFromGameBase 2000
 
 
 decisionTreeWhenInSpace : BotDecisionContext -> SeeUndockingComplete -> DecisionPathNode
