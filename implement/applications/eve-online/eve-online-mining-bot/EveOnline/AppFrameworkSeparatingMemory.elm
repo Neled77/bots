@@ -1,5 +1,6 @@
 module EveOnline.AppFrameworkSeparatingMemory exposing (..)
 
+import BotEngine.Interface_To_Host_20201207 as InterfaceToHost
 import Common.DecisionPath
 import Common.EffectOnWindow
 import EveOnline.AppFramework
@@ -63,24 +64,52 @@ millisecondsToNextReadingFromGameDefault =
     1500
 
 
-initAppState : appMemory -> AppState appMemory
-initAppState appMemory =
+initState : appMemory -> EveOnline.AppFramework.StateIncludingFramework appSettings (AppState appMemory)
+initState appMemory =
+    EveOnline.AppFramework.initState (initStateInBaseFramework appMemory)
+
+
+initStateInBaseFramework : appMemory -> AppState appMemory
+initStateInBaseFramework appMemory =
     { appMemory = appMemory
     , lastStepEffects = []
     , lastReadingFromGameClient = Nothing
     }
 
 
-processEveOnlineAppEvent :
+processEvent :
+    { parseAppSettings : String -> Result String appSettings
+    , selectGameClientInstance : Maybe appSettings -> List EveOnline.AppFramework.GameClientProcessSummary -> Result String { selectedProcess : EveOnline.AppFramework.GameClientProcessSummary, report : List String }
+    , updateMemoryForNewReadingFromGame : UpdateMemoryContext -> appMemory -> appMemory
+    , statusTextFromDecisionContext : StepDecisionContext appSettings appMemory -> String
+    , decideNextStep : StepDecisionContext appSettings appMemory -> DecisionPathNode
+    }
+    -> InterfaceToHost.AppEvent
+    -> EveOnline.AppFramework.StateIncludingFramework appSettings (AppState appMemory)
+    -> ( EveOnline.AppFramework.StateIncludingFramework appSettings (AppState appMemory), InterfaceToHost.AppResponse )
+processEvent appConfiguration =
+    EveOnline.AppFramework.processEvent
+        { parseAppSettings = appConfiguration.parseAppSettings
+        , selectGameClientInstance = appConfiguration.selectGameClientInstance
+        , processEvent =
+            processEventInBaseFramework
+                { updateMemoryForNewReadingFromGame = appConfiguration.updateMemoryForNewReadingFromGame
+                , statusTextFromDecisionContext = appConfiguration.statusTextFromDecisionContext
+                , decideNextStep = appConfiguration.decideNextStep
+                }
+        }
+
+
+processEventInBaseFramework :
     { updateMemoryForNewReadingFromGame : UpdateMemoryContext -> appMemory -> appMemory
-    , statusText : StepDecisionContext appSettings appMemory -> String
-    , decideNextAction : StepDecisionContext appSettings appMemory -> DecisionPathNode
+    , statusTextFromDecisionContext : StepDecisionContext appSettings appMemory -> String
+    , decideNextStep : StepDecisionContext appSettings appMemory -> DecisionPathNode
     }
     -> EveOnline.AppFramework.AppEventContext appSettings
     -> EveOnline.AppFramework.AppEvent
     -> AppState appMemory
     -> ( AppState appMemory, EveOnline.AppFramework.AppEventResponse )
-processEveOnlineAppEvent config eventContext event stateBefore =
+processEventInBaseFramework config eventContext event stateBefore =
     case event of
         EveOnline.AppFramework.ReadingFromGameClientCompleted readingFromGameClient ->
             let
@@ -102,7 +131,7 @@ processEveOnlineAppEvent config eventContext event stateBefore =
                     }
 
                 ( decisionStagesDescriptions, decisionLeaf ) =
-                    config.decideNextAction decisionContext
+                    config.decideNextStep decisionContext
                         |> Common.DecisionPath.unpackToDecisionStagesDescriptionsAndLeaf
 
                 effectsOnGameClientWindow =
@@ -127,7 +156,7 @@ processEveOnlineAppEvent config eventContext event stateBefore =
                         |> String.join "\n"
 
                 statusMessage =
-                    [ config.statusText decisionContext, describeActivity ]
+                    [ config.statusTextFromDecisionContext decisionContext, describeActivity ]
                         |> String.join "\n"
             in
             ( { appMemory = appMemory
@@ -432,3 +461,71 @@ decideActionForCurrentStep effects =
             , millisecondsToNextReadingFromGameModifierPercent = 0
             }
         )
+
+
+{-| 2021-01-27:
+The notifications functionality is currently work-in-progress.
+For now, this wrapper helps app developers use the same API as is currently expected for the built-in notifications functionality.
+
+One design goal is to support users customizing notifications quickly and independently of the app program code.
+To achieve this goal, we let users work with the data they are already familiar with: The status text can be seen during a live run and is also prominently displayed when inspecting a session in the devtools. Using the status text as the data source also ensures users can easily reuse their notification rules with any app.
+
+-}
+processEventWithNotificationsShim :
+    { parseAppSettings : String -> Result String appSettings
+    , selectGameClientInstance : Maybe appSettings -> List EveOnline.AppFramework.GameClientProcessSummary -> Result String { selectedProcess : EveOnline.AppFramework.GameClientProcessSummary, report : List String }
+    , updateMemoryForNewReadingFromGame : UpdateMemoryContext -> appMemory -> appMemory
+    , statusTextFromDecisionContext : StepDecisionContext appSettings appMemory -> String
+    , decideNextStep : StepDecisionContext appSettings appMemory -> DecisionPathNode
+    , notificationsBeepSequenceFromStatusText : String -> List EveOnline.AppFramework.ConsoleBeepStructure
+    }
+    -> InterfaceToHost.AppEvent
+    -> EveOnline.AppFramework.StateIncludingFramework appSettings (AppState appMemory)
+    -> ( EveOnline.AppFramework.StateIncludingFramework appSettings (AppState appMemory), InterfaceToHost.AppResponse )
+processEventWithNotificationsShim appConfiguration =
+    EveOnline.AppFramework.processEvent
+        { parseAppSettings = appConfiguration.parseAppSettings
+        , selectGameClientInstance = appConfiguration.selectGameClientInstance
+        , processEvent =
+            \eventContext event stateBefore ->
+                let
+                    ( state, responseBeforeNotifications ) =
+                        processEventInBaseFramework
+                            { updateMemoryForNewReadingFromGame = appConfiguration.updateMemoryForNewReadingFromGame
+                            , statusTextFromDecisionContext = appConfiguration.statusTextFromDecisionContext
+                            , decideNextStep = appConfiguration.decideNextStep
+                            }
+                            eventContext
+                            event
+                            stateBefore
+
+                    response =
+                        case responseBeforeNotifications of
+                            EveOnline.AppFramework.ContinueSession continueSession ->
+                                let
+                                    beepSequence =
+                                        appConfiguration.notificationsBeepSequenceFromStatusText continueSession.statusDescriptionText
+
+                                    beepEffects =
+                                        if beepSequence == [] then
+                                            []
+
+                                        else
+                                            [ EveOnline.AppFramework.EffectConsoleBeepSequence beepSequence ]
+
+                                    statusTextNotificationsLine =
+                                        "notifications-shim: " ++ String.fromInt (List.length beepSequence) ++ " beeps."
+                                in
+                                EveOnline.AppFramework.ContinueSession
+                                    { continueSession
+                                        | effects =
+                                            continueSession.effects ++ beepEffects
+                                        , statusDescriptionText =
+                                            String.join "\n" [ continueSession.statusDescriptionText, statusTextNotificationsLine ]
+                                    }
+
+                            EveOnline.AppFramework.FinishSession _ ->
+                                responseBeforeNotifications
+                in
+                ( state, response )
+        }
