@@ -2,7 +2,7 @@ What is more interesting than playing video games? - Programming bots to play vi
 
 ## Guides
 
-+ Video on how to start a bot or botengine app: https://youtu.be/Q44uTEKw_aA
++ Video on how to start a bot or botengine app: https://vimeo.com/508935946
 
 + How to install/register the `botengine` command: https://to.botengine.org/failed-run-did-not-find-botengine-program
 
@@ -21,6 +21,8 @@ What is more interesting than playing video games? - Programming bots to play vi
 + Syntax of the Elm programming language: https://elm-lang.org/docs/syntax
 
 + Elm programming language - forward pipe (`|>`) and function composition (`>>`) operators: https://to.botengine.org/guide/elm-programming-language-forward-pipe-and-function-composition-operators
+
++ Learning Elm? Download the Elm Cheat Sheet to support you during the learning process: https://github.com/lucamug/elm-cheat-sheet/
 
 + Get a guide for writing Elm code that reads from the EVE Online game client's user interface: Using types from the parsed user interface: https://to.botengine.org/guide/parsed-user-interface-of-the-eve-online-game-client
 
@@ -60,6 +62,10 @@ What is more interesting than playing video games? - Programming bots to play vi
 
 
 More links to program codes are listed at [https://catalog.botengine.org](https://catalog.botengine.org)
+
+## Related Guides
+
++ Learn to make online games using the Elm programming language: https://github.com/onlinegamemaker/making-online-games
 
 ## Exploration
 
