@@ -13,9 +13,9 @@ It automatically detects barbarian villages, available troops and configured arm
 
 ### Efficient
 
++ Fast enough to send 800 attacks per hour.
 + Supports multiple army presets per village to make the best use of your troops.
 + Takes into account the limit of 50 attacks per village.
-+ Fast enough to send 800 attacks per hour.
 + Option to avoid barbarian villages under a certain amount of points.
 + Avoid having your troops die at remaining walls: Option to avoid barbarian villages with specific coordinates.
 + Supports running on multiple accounts simultaneously on a single PC.
@@ -32,11 +32,11 @@ This video shows the process of starting the farmbot and setting up your Tribal 
 
 https://youtu.be/yzkernqechE
 
-To start the farmbot, download the executable file from [https://botengine.blob.core.windows.net/blob-library/by-name/tribal-wars-2-farmbot-2020-12-07.exe](https://botengine.blob.core.windows.net/blob-library/by-name/tribal-wars-2-farmbot-2020-12-07.exe) and then run it.
+To start the farmbot, download the executable file from https://botlabs.blob.core.windows.net/blob-library/by-name/tribal-wars-2-farmbot-2020-12-07.exe and then run it.
 
 The first time you start the bot, it will download a web browser component. This can take some time, depending on your internet connection.
 
-![Tribal Wars 2 Farmbot Starting](./image/2020-01-25.tribal-wars-2-farmbot-before-login.png)
+![Tribal Wars 2 Farmbot Starting](./image/2021-07-05-tribal-wars-2-farmbot-before-login.png)
 
 When the browser download is finished, the bot opens a 'chromium' web browser window, which is a variant of googles chrome web browser. In the Windows taskbar, it appears with an icon that is a blueish version of the google chrome logo:
 
@@ -103,12 +103,14 @@ Following is a list of available settings:
 
 + `number-of-farm-cycles` : Number of farm cycles before the bot stops. The default is only one (`1`) cycle.
 + `break-duration` : Duration of breaks between farm cycles, in minutes. You can also specify a range like `60-120`. It will then pick a random value in this range.
-+ `farm-barb-min-points` : Minimum points of barbarian villages to attack.
-+ `farm-barb-max-distance` : Maximum distance of barbarian villages to attack.
-+ `farm-avoid-coordinates` : List of village coordinates to avoid when farming. Here is an example with two coordinates: '567|456 413|593'
-+ `character-to-farm` : Name of a (player) character to farm like barbarians.
++ `farm-barb-min-points`: Minimum points of barbarian villages to attack.
++ `farm-barb-max-distance`: Maximum distance of barbarian villages to attack.
++ `farm-avoid-coordinates`: List of village coordinates to avoid when farming. Here is an example with two coordinates: '567|456 413|593'. This filter applies to both target and sending villages.
++ `farm-player`: Name of a player/character to farm. By default, the bot only farms barbarians, but this setting allows you to also farm players.
++ `farm-army-preset-pattern`: Text for filtering the army presets to use for farm attacks. Army presets only pass the filter when their name contains this text.
++ `limit-outgoing-commands-per-village`: The maximum number of outgoing commands per village before the bot considers the village completed. By default, the bot will use up all available 50 outgoing commands per village.
 
-To configure settings, open the configuration page at https://catalog.botengine.org/d0b382bd4254d5cba7394c6910580e0781810de86a5d0d568faf3215e78951b9 in a web browser.
+To configure settings, open the configuration page at https://catalog.botlab.org/f238299ce5a0e8e64e474016058e35f7edf0929637d33783b74fe1c256b4cd33 in a web browser.
 
 On this page, scroll down to the button `Configure app`.
 
@@ -138,11 +140,11 @@ When you have applied settings for multiple farm cycles, the bot displays this m
 
 ## Pricing and Online Sessions
 
-You can test the bot for free. When you want the bot to run more than 15 minutes per session, use an online session as explained at [https://to.botengine.org/guide/online-session](https://to.botengine.org/guide/online-session)
+You can test the bot for free. When you want the bot to run more than 15 minutes per session, use an online session as explained at [https://to.botlab.org/guide/online-session](https://to.botlab.org/guide/online-session)
 
-Online sessions cost 2000 credits per hour. To add credits to your account, follow the instructions at [https://reactor.botengine.org/billing/add-credits](https://reactor.botengine.org/billing/add-credits)
+Online sessions cost 2000 credits per hour. To add credits to your account, follow the instructions at https://reactor.botlab.org/billing/add-credits
 
-For more about purchasing and using credits, see the guide at [https://forum.botengine.org/t/purchasing-and-using-botengine-credits-frequently-asked-questions-faq/837](https://forum.botengine.org/t/purchasing-and-using-botengine-credits-frequently-asked-questions-faq/837)
+For more about purchasing and using credits, see the guide at https://forum.botlab.org/t/purchasing-and-using-botlab-credits-frequently-asked-questions-faq/837
 
 ## Frequently Asked Questions
 
@@ -187,6 +189,6 @@ Note that browser state like bookmarks and cookies belong to that web browser pr
 
 ## Getting Help
 
-If you have any questions, the [BotEngine forum](https://forum.botengine.org) is a good place to learn more. You can also contact me at [support@botengine.org](mailto:support@botengine.org?subject=Tribal%20Wars%202%20Farmbot%20-%20your%20issue%20here)
+If you have any questions, the [BotLab forum](https://forum.botlab.org) is a good place to learn more. You can also contact me at [support@botlab.org](mailto:support@botlab.org?subject=Tribal%20Wars%202%20Farmbot%20-%20your%20issue%20here)
 
 When asking for help with the bot, include the complete text from the console window or a screenshot. Make sure screenshots are well readable. Don't try to insert a screenshot directly into the forum, as it will be compressed and unreadable. When posting on the forum, you can link screenshots hosted at other sites like Github or imgur.
